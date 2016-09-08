@@ -5,6 +5,7 @@
 
 var fs = require('fs');
 var system = require("system");
+var utils = require("utils");
 
 var casper = require("casper").create({
     //verbose: true,
@@ -24,8 +25,8 @@ casper.start();
 
 var config = loadConfiguration();
 var publishProfile = config.profile;
-var cookiesPath = "./ask/casper/cookies/" + config.username + ".json";
-var screenshotsDir = "./ask/casper/screenshots/";
+var cookiesPath = config.profile.skillOutputDirectory + "/casper/cookies/" + config.username + ".json";
+var screenshotsDir = config.profile.skillOutputDirectory + "/casper/screenshots/";
 var intentsFileName = "intents.json";
 var slotTypesFileName = "slot-definitions.txt";
 var utterancesFileName = "utterances.utr";
@@ -129,12 +130,12 @@ casper.then(function checkForExistingSkillAndRemove() {
 
 casper.then(function deleteExistingSkill() {
     this.echo("Removing skill \"" + publishProfile.skillName + "\"...", "COMMENT");
-    this.evaluate(function() {
-        $('.EDW_AppList span.CellAppName:contains("PublishTest")')
+    this.evaluate(function(publishProfile) {
+        $('.EDW_AppList span.CellAppName:contains("' + publishProfile.skillName + '")')
             .closest("tr")
             .find('button:contains("Delete")')
             .click();
-    });
+    }, publishProfile);
     this.waitFor(function waitForConfirmationDialog() {
        return this.evaluate(function() {
             return $('#edw-message-box').find('button:contains("Delete")').length;
@@ -164,7 +165,12 @@ casper.then(function createNewSkill() {
         // set if audio player directives are used for the skill
         this.click('edw-user-input[edw-name="AppEditingConfig.ALEXA_APPSTORE_INFO_TAB.SUB_SECTIONS.AUDIO_PLAYER"] input[type="radio"][value="' + publishProfile.usesAudioPlayer + '"]');
 
-        this.click('#edw-save-skill-button');
+        //this.click('#edw-save-skill-button');
+        saveChanges.call(this,{
+            loadingMessage: "Creating new skill...",
+            successMessage: "",
+            failureMessage: "Failed to create new skill"
+        });
 
         this.waitUntilVisible('edw-user-input[edw-name="AppEditingConfig.APP_INFO_TAB.ID.TEXT"]', function() {
             // Get the application id for the skill
@@ -324,7 +330,7 @@ casper.then(function configureEndpoint() {
         this.echo("Configuring endpoint...");
         var endpointType;
         // is this a lambda endpoint?
-        if (publishProfile.endpoint.indexOf("arn:") === 0) {
+        if (publishProfile.endpoint.type.toLowerCase() === "lambda") {
             // set endpoint type
             this.click("#createArnEndpoint");
             endpointType = "Lambda";
@@ -334,16 +340,16 @@ casper.then(function configureEndpoint() {
         }
 
         this.evaluate(function(publishProfile) {
-            var endpointTextBox = $('#edw-info-endpoint-input').find('input[type="text"]');
-            endpointTextBox.val(publishProfile.endpoint);
+            var endpointTextBox = $('#edw-info-endpoint-input').find('input[type="text"]:visible');
+            endpointTextBox.val(publishProfile.endpoint.location);
             angular.element(endpointTextBox).triggerHandler('input');
         }, publishProfile);
 
         saveChanges.call(this, {
             loadingMessage: "Saving endpoint configuration, please wait...",
-            successMessage: "Successfully configured endpoint to " + endpointType + ": " + publishProfile.endpoint,
+            successMessage: "Successfully configured endpoint to " + endpointType + ": " + publishProfile.endpoint.location,
             failureMessage: "Failed to save endpoint configuration"
-        })
+        });
     }
 });
 
@@ -353,7 +359,7 @@ casper.then(function() {
         "\tApplication Id: " + publishProfile.applicationId + "\n" +
         "\tName: " + publishProfile.skillName + "\n" +
         "\tInvocation Name: " + publishProfile.skillInvocationName + "\n" +
-        "\tEndpoint: " + publishProfile.endpoint,
+        "\tEndpoint: " + publishProfile.endpoint.location,
         "GREEN_BAR"
     );
 
@@ -427,7 +433,10 @@ function saveChanges(context) {
         });
     }, function onSaveEnabled() {
         this.click("#edw-save-skill-button");
-        this.echo(context.loadingMessage, "COMMENT");
+        if (context.loadingMessage) {
+            this.echo(context.loadingMessage, "COMMENT");
+        }
+
         this.waitFor(function waitSaveComplete() {
             return this.evaluate(function(){
                 try {
@@ -442,11 +451,14 @@ function saveChanges(context) {
                 return angular.element($("#EDW_Status")).scope().getStatus();
             });
 
-            if (status.type !== "success") {
+            if (status.type && status.type !== "success") {
                 return this.emit("step.error", context.failureMessage + "\nReason: " + status.message);
             }
 
-            this.echo(context.successMessage, "INFO");
+            if (context.successMessage) {
+                this.echo(context.successMessage, "INFO");
+            }
+
         }, function onTimeout() {
             this.emit("step.error", context.failureMessage + "\nReason: Timed out!");
         }, publishProfile.buildModelTimeout);

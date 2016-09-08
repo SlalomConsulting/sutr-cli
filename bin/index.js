@@ -12,8 +12,8 @@ var prompt = require("prompt");
 var colors = require("colors/safe");
 var child_process = require("child_process");
 var spawn = child_process.spawn;
-var commandLineArgs = require("command-line-args");
-var getUsage = require("command-line-usage");
+var commandLineArgs = require("command-line-args"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
+var getUsage = require("command-line-usage"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var Promise = require("promise");
 var util = require("util");
 var mkdirp = require("mkdirp");
@@ -24,6 +24,7 @@ var sutrConfigFilePath = path.resolve(sutrConfigDir + "/config");
 var env;
 var supportedRuntimes = ["nodejs", "nodejs4.3", "java8", "python2.7"];
 var defaultRuntime = supportedRuntimes[1];
+var defaultRegion = "us-east-1";
 var profileOutputDir = path.resolve("./deployment/profiles");
 
 
@@ -38,9 +39,14 @@ colors.setTheme({
 
 executeCommand();
 
-function startSkillDeployment(config) {
+function startSkillDeployment(options) {
     return new Promise(function(resolve, reject) {
-        var casperJS = spawn("casperjs", ["alexa-skill-deployment-adapter.js"], {stdio: "pipe"});
+        if (!options.skills) {
+            comment("Skipping publish of skills.  Include --skills command line argument to publish skills");
+            return resolve();
+        }
+
+        var casperJS = spawn("casperjs", [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")], {stdio: "pipe"});
 
         casperJS.stdout.on("data", function(data){
             process.stdout.write(data);
@@ -54,7 +60,7 @@ function startSkillDeployment(config) {
             return resolve();
         });
 
-        casperJS.stdin.end(JSON.stringify(config));
+        casperJS.stdin.end(JSON.stringify(options));
     });
 }
 
@@ -65,9 +71,9 @@ function showHelp() {
             content: 'Welcome to the command line interface for serving your Amazon Echo deployment needs.'
         },
         {
-            header: 'Synopsis',
+            header: 'Usage',
             content:
-                "$ sutr configure\n" +
+                "$ sutr configure [--env envName]\n" +
                 "$ sutr publish --profile file [--skills] [--lambda]\n"
         },
         {
@@ -95,6 +101,7 @@ function executeCommand() {
         { name: "command", type: String, defaultOption: true},
         { name: "env", type: String },
         { name: "profile", type: String },
+        { name: "skills", type: Boolean},
         { name: "help", type: Boolean }
     ];
 
@@ -114,9 +121,20 @@ function executeCommand() {
     } else if (options.command === "publish") {
         loadPublishProfileConfiguration(options)
             .then(function() {
-                return setSkillsCredentials(options);
+                env = options.env || options.profile.environment;
+                return loadSutrConfiguration(options);
             })
-            .then(function() {
+            .then(function(allConfigs) {
+                var config = allConfigs[env];
+                if (!config || !config.skills_access_key_id || !config.skills_secret_access_key) {
+                    return setUsageErrorAndExit(400, "Configuration missing. Please call sutr configure to enable publishing");
+                }
+
+                return config;
+            })
+            .then(function(config) {
+                options.username = config.skills_access_key_id;
+                options.password = decrypt(config.skills_secret_access_key);
                 return startSkillDeployment(options);
             })
             .then(function() {
@@ -204,7 +222,7 @@ function loadSutrConfiguration() {
 
         config[env] = config[env] || {};
         // currently, Lambda for Alexa Skills Kit is only available in the us-east-1 region
-        config[env].region = config[env].region || "us-east-1";
+        config[env].region = config[env].region || defaultRegion;
 
         resolve(config);
     });
@@ -216,6 +234,7 @@ function setAwsConfiguration(config) {
 
         var existingAWSAccessKeyStr = config.aws_access_key_id ? " [" + config.aws_access_key_id + "]" : " [None]";
         var existingAWSSecretAccessKeyStr = config.aws_secret_access_key ? " [*****]" : " [None]";
+        var existingAWSRegionStr = config.region ? " [" + config.region + "]" : " [None]";
 
         prompt.message = "";
         prompt.start();
@@ -235,6 +254,12 @@ function setAwsConfiguration(config) {
                         return value || config.aws_secret_access_key;
                     }
                 },
+                region: {
+                    description: "AWS Region" + existingAWSRegionStr,
+                    before: function(value) {
+                        return value || config.region;
+                    }
+                },
                 lambdaFunctionRole: {
                     description: "AWS Lambda Execution Role [" + (config.aws_lambda_execution_role || "None") + "]"
                 }
@@ -247,6 +272,7 @@ function setAwsConfiguration(config) {
 
             config.aws_access_key_id = result.username;
             config.aws_secret_access_key = result.password;
+            config.region = result.region;
 
             if (result.lambdaFunctionRole) {
                 config.aws_lambda_execution_role = result.lambdaFunctionRole;
@@ -262,7 +288,7 @@ function setSkillsCredentials(config) {
         comment("You must provide your Amazon Developer account credentials to authorize publishing Alexa Skills.");
 
         var existingSkillsAccessKeyStr = config.skills_access_key_id ? " [" + config.skills_access_key_id + "]" : " [None]";
-        var existingSkillsSecretAccessKeyStr = config.aws_secret_access_key ? " [*****]" : " [None]";
+        var existingSkillsSecretAccessKeyStr = config.skills_secret_access_key ? " [*****]" : " [None]";
 
         prompt.message = "";
         prompt.start();
@@ -310,7 +336,7 @@ function getNewFunctionConfiguration(config) {
         prompt.get({
             properties: {
                 lamdaFunctionDescription: {
-                    description: "Lambda Function Description [None]",
+                    description: "Lambda Function Description [None]"
                 },
                 lambdaFunctionRole: {
                     description: "Lambda Function Role [" + (config.aws_lambda_execution_role || "None") + "]",
@@ -415,7 +441,7 @@ function generatePublishProfile(prompts, config) {
             skillInvocationName: prompts.skillInvocationName,
             skillType: "Custom",
             usesAudioPlayer: false,
-            skillOutputDirectory: "./ask",
+            skillOutputDirectory: "./deployment/ask",
             sourceDirectory: "./lambda",
             buildModelTimeout: 60000,
             endpoint: {
@@ -459,7 +485,7 @@ function getOrCreateLambdaFunction(prompts, config) {
         info("Getting details for Lambda function named \"" + prompts.lambdaFunctionName + "\" ...");
 
         // if a lambda function with the given name already exists for the account
-        var lambda = executeCmdSync("aws lambda get-function --function-name " + prompts.lambdaFunctionName, false, false);
+        var lambda = executeCmdSync("aws --profile sutr lambda get-function --function-name " + prompts.lambdaFunctionName, false, false);
         if (lambda) {
             lambda = JSON.parse(lambda);
             var arn = lambda.Configuration.FunctionArn;
@@ -487,7 +513,7 @@ function getOrCreateLambdaFunction(prompts, config) {
 
                     // create AWS lambda function
                     lambda = executeCmdSync(
-                        "aws lambda create-function " +
+                        "aws --profile sutr lambda create-function " +
                         "--function-name " + prompts.lambdaFunctionName + " " +
                         "--runtime " + lambdaConfig.lambdaFunctionRuntime + " " +
                         "--handler index.handler " +
@@ -503,7 +529,7 @@ function getOrCreateLambdaFunction(prompts, config) {
                     // Allow Alexa Skill Kit to call lambda function
                     info("Adding permission to allow Alexa Skills Kit to invoke lambda function...");
                     executeCmdSync(
-                        "aws lambda add-permission " +
+                        "aws --profile sutr lambda add-permission " +
                         "--function-name " + prompts.lambdaFunctionName + " " +
                         "--statement-id " + new Date().getTime() + " " +
                         "--action \"lambda:InvokeFunction\" " +
@@ -556,8 +582,9 @@ function loadPublishProfileConfiguration(config) {
             comment("Loading publish profile at \"" + profilePath + "\" ...");
             var publishConfig = JSON.parse(fs.readFileSync(profilePath));
             config.profile = publishConfig;
-            console.log(colors.green(util.inspect(publishConfig)));
-            // TODO: validate publish profile
+            config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
+            config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
+            info(JSON.stringify(publishConfig, null, 2));
         } catch (e) {
             setErrorAndExit(400, "Error loading profile: " + e);
         }
@@ -616,8 +643,7 @@ function executeCmdSync(cmd, showOutput, exitOnFailure) {
         return output || true;
     } catch (e) {
         if (exitOnFailure) {
-            process.stdout.write(e.message);
-            process.exit(500);
+            return setErrorAndExit(500, e.message);
         }
 
         return undefined;
