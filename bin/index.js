@@ -17,7 +17,10 @@ var getUsage = require("command-line-usage"); // TODO: use commander instead (ht
 var Promise = require("promise");
 var util = require("util");
 var mkdirp = require("mkdirp");
-var zipFolder = require("zip-folder");
+var zipDir = require("zip-dir");
+var ncp = require("ncp").ncp;
+ncp.limit = 16;
+var rmdir = require("rimraf");
 
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
 var sutrConfigFilePath = path.resolve(sutrConfigDir + "/config");
@@ -51,26 +54,51 @@ function startLambdaDeployment(options, config) {
             return resolve();
         }
 
-        info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
-
         var uploadZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
-        var uploadZipFile = path.resolve(uploadZipDestinationDir, options.profileName + ".zip");
+        var uploadStagingDir = path.resolve(uploadZipDestinationDir, "upload");
+        var uploadZipFile = path.resolve(uploadZipDestinationDir, "index.zip");
         var uploadZipSourceDir = path.resolve(options.profile.sourceDirectory);
-        mkdirp.sync(uploadZipDestinationDir);
+        info("Packaging zip of source code for upload to Lambda: " + uploadZipSourceDir);
 
-        zipFolder(uploadZipSourceDir, uploadZipFile , function(err) {
-            if(err) {
-                return reject("An error occurred while creating zip file for upload: " + err);
-            }
+        // Remove any possible existing files left over from a previous upload
+        Promise.denodeify(rmdir)(uploadStagingDir)
+            .then(function(){
+                mkdirp.sync(uploadStagingDir);
+                // copy lambda source code to temporary upload directory
+                return Promise.denodeify(ncp)(uploadZipSourceDir, uploadStagingDir)
+            })
+            .then(function(){
+                // TODO: only copy over dependencies (i.e. NOT devDependencies)
+                // copy the node_modules from the source directory to resolve dependencies for lambda code
+                return Promise.denodeify(ncp)("./node_modules", path.resolve(uploadStagingDir, "node_modules"));
+            })
+            .then(function() {
+                return Promise.denodeify(zipDir)(uploadStagingDir, { saveTo: uploadZipFile });
+            })
+            .catch(function(err) {
+                setErrorAndExit(500, "Error packaging source code for upload" + err);
+            })
+            .then(function(){
+                info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
 
-            // create AWS lambda function
-            lambda = executeCmdSync(
-                "aws --profile sutr lambda update-function-code " +
-                "--function-name " + options.profile.endpoint.location + " " +
-                "--zip-file fileb://" + uploadZipFile + " ", true, true);
+                executeCmdSync("aws configure set aws_access_key_id " + config.aws_access_key_id + " --profile sutr", false, true);
+                executeCmdSync("aws configure set aws_secret_access_key " + config.aws_secret_access_key + " --profile sutr", false, true);
+                executeCmdSync("aws configure set output json --profile sutr", false, true);
+                executeCmdSync("aws configure set region " + config.region + " --profile sutr", false, true);
 
-            success("Successfully uploaded code to Lambda function \"" + options.profile.endpoint.location);
-        });
+                // create AWS lambda function
+                lambda = executeCmdSync(
+                    "aws --profile sutr lambda update-function-code " +
+                    "--function-name " + options.profile.endpoint.location + " " +
+                    "--zip-file fileb://" + uploadZipFile + " ", false, true);
+
+                success("Successfully uploaded code to Lambda function \"" + options.profile.endpoint.location);
+                resolve();
+            })
+            .catch(function(err) {
+                setErrorAndExit(500, "An error occurred while uploading code to Lambda" + err);
+            });
+
     });
 }
 
@@ -555,7 +583,7 @@ function getOrCreateLambdaFunction(prompts, config) {
                 var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
                 mkdirp.sync(starterZipDestinationDir);
 
-                zipFolder(starterZipSourceDir, starterZipFile , function(err) {
+                zipDir(starterZipSourceDir, { saveTo: starterZipFile } , function(err) {
                     if(err) {
                         return reject("An error occurred while creating lambda function: " + err);
                     }
