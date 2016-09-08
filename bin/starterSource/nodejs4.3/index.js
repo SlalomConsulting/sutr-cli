@@ -103,10 +103,13 @@ function getWelcomeResponse(callback) {
     // If we wanted to initialize the session to have some attributes we could add those here.
     var sessionAttributes = {};
     var cardTitle = "Welcome to Sutr";
+    // we use "soocher" instead of "sutr" to get a better pronunciation from Alexa :P
     var speechOutput =
-        "Thank you for choosing Sutr." +
-        "Your application has been successfully configured." +
-        "Use sutr publish to upload your latest code.";
+        "<speak>" +
+            "<s>Thank you for choosing Soocher</s>" +
+            "<s>Your application has been successfully configured</s>" +
+            "<s>Use Soocher publish to upload your latest code</s>" +
+        "</speak>";
 
     callback(sessionAttributes, buildSpeechletResponse(cardTitle, speechOutput, null, true));
 }
