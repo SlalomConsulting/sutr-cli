@@ -10,21 +10,29 @@ var path = require("path");
 var ini = require("ini");
 var prompt = require("prompt");
 var colors = require("colors/safe");
-var spawn = require("child_process").spawn;
+var child_process = require("child_process");
+var spawn = child_process.spawn;
 var commandLineArgs = require("command-line-args");
 var getUsage = require("command-line-usage");
 var Promise = require("promise");
 var util = require("util");
+var mkdirp = require("mkdirp");
+var zipFolder = require("zip-folder");
 
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
 var sutrConfigFilePath = path.resolve(sutrConfigDir + "/config");
 var env;
+var supportedRuntimes = ["nodejs", "nodejs4.3", "java8", "python2.7"];
+var defaultRuntime = supportedRuntimes[1];
+var profileOutputDir = path.resolve("./deployment/profiles");
+
 
 colors.setTheme({
     info: "white",
     error: "bgRed",
     warning: "red",
     title: ["green", "bold"],
+    success: "bgGreen",
     comment: "yellow"
 });
 
@@ -146,6 +154,10 @@ function setSutrConfiguration() {
                 return saveSutrConfiguration(allConfigs);
             })
             .then(function() {
+                title("Step 3: Create a Publish Profile");
+                return createPublishProfile(config);
+            })
+            .then(function() {
                 resolve();
             })
             .catch(function(err) {
@@ -210,12 +222,21 @@ function setAwsConfiguration(config) {
         prompt.get({
             properties: {
                 username: {
-                    description: "AWS Access Key ID" + existingAWSAccessKeyStr
+                    description: "AWS Access Key ID" + existingAWSAccessKeyStr,
+                    before: function(value) {
+                        return value || config.aws_access_key_id;
+                    }
                 },
                 password: {
                     description: "AWS Secret Access Key" + existingAWSSecretAccessKeyStr,
                     hidden: true,
-                    replace: "*"
+                    replace: "*",
+                    before: function(value) {
+                        return value || config.aws_secret_access_key;
+                    }
+                },
+                lambdaFunctionRole: {
+                    description: "AWS Lambda Execution Role [" + (config.aws_lambda_execution_role || "None") + "]"
                 }
             }
         }, function (err, result) {
@@ -224,8 +245,12 @@ function setAwsConfiguration(config) {
                 return process.exit(400);
             }
 
-            config.aws_access_key_id = result.username || config.aws_access_key_id;
-            config.aws_secret_access_key = result.password || config.aws_secret_access_key;
+            config.aws_access_key_id = result.username;
+            config.aws_secret_access_key = result.password;
+
+            if (result.lambdaFunctionRole) {
+                config.aws_lambda_execution_role = result.lambdaFunctionRole;
+            }
 
             resolve();
         });
@@ -244,12 +269,22 @@ function setSkillsCredentials(config) {
         prompt.get({
             properties: {
                 username: {
-                    description: "Email" + existingSkillsAccessKeyStr
+                    description: "Email" + existingSkillsAccessKeyStr,
+                    before: function(value) {
+                        return value || config.skills_access_key_id;
+                    }
                 },
                 password: {
                     description: "Password" + existingSkillsSecretAccessKeyStr,
                     hidden: true,
-                    replace: "*"
+                    replace: "*",
+                    before: function(value) {
+                        if (value) {
+                            return encrypt(value);
+                        }
+
+                        return config.skills_secret_access_key;
+                    }
                 }
             }
         }, function (err, result) {
@@ -258,10 +293,246 @@ function setSkillsCredentials(config) {
                 return process.exit(400);
             }
 
-            config.skills_access_key_id = result.username || config.skills_access_key_id;
-            config.skills_secret_access_key = encrypt(result.password) || config.skills_access_key_id;
+            config.skills_access_key_id = result.username;
+            config.skills_secret_access_key = result.password;
 
             resolve();
+        });
+    });
+}
+
+function getNewFunctionConfiguration(config) {
+    return new Promise(function(resolve) {
+        comment("Just a few more details to create your new Lambda function");
+
+        prompt.message = "";
+        prompt.start();
+        prompt.get({
+            properties: {
+                lamdaFunctionDescription: {
+                    description: "Lambda Function Description [None]",
+                },
+                lambdaFunctionRole: {
+                    description: "Lambda Function Role [" + (config.aws_lambda_execution_role || "None") + "]",
+                    message: "Enter the ARN of the IAM role to use when executing the lambda function",
+                    conform: function(value) {
+                        return value || config.aws_lambda_execution_role;
+                    },
+                    before: function(value) {
+                        return value || config.aws_lambda_execution_role;
+                    }
+                },
+                lambdaFunctionRuntime: {
+                    pattern: new RegExp("^" + supportedRuntimes.join("|") + "$", "i"),
+                    description: "Lambda Function Runtime: [" + defaultRuntime + "]",
+                    message: "Possible values: " + supportedRuntimes.join(", "),
+                    before: function(value) {
+                        return value || defaultRuntime;
+                    }
+                }
+            }
+        }, function (err, result) {
+            if (!result) {
+                // The most likely cause to this is when a command is cancelled.
+                return process.exit(400);
+            }
+
+            resolve(result);
+        });
+    });
+}
+
+function createPublishProfile(config) {
+    return new Promise(function(resolve){
+        comment("A publish profile is used to configure a deployment for a skill.");
+        info("Enter a profile name below to create a new profile");
+
+        prompt.message = "";
+        prompt.start();
+        prompt.get({
+            properties: {
+                profileName: {
+                    pattern: /^[a-zA-Z0-9\-_]+$/,
+                    description: "Profile Name [None]",
+                    message: "Only letters, numbers, dashes and underscores please."
+                },
+                skillName: {
+                    pattern: /^[a-zA-Z\s]+$/,
+                    description: "Skill Name",
+                    message: "Only letters and spaces please",
+                    required: true,
+                    ask: function() {
+                        return prompt.history("profileName").value;
+                    }
+                },
+                skillInvocationName: {
+                    pattern: /^[a-zA-Z\s]+$/,
+                    description: "Skill Invocation Name",
+                    message: "Only letters and spaces please",
+                    required: true,
+                    ask: function() {
+                        return prompt.history("profileName").value;
+                    }
+                },
+                lambdaFunctionName: {
+                    pattern: /^[a-zA-Z\-_]+$/,
+                    description: "Lambda Function Name [None]",
+                    message: "Only letters, dashes, and underscores please.",
+                    ask: function() {
+                        return prompt.history("profileName").value;
+                    }
+                }
+            }
+        }, function (err, result) {
+            if (!result) {
+                // The most likely cause to this is when a command is cancelled.
+                return process.exit(400);
+            }
+
+            if (result.profileName) {
+                // result.lambdaFunctionRole = result.lambdaFunctionRole || config.aws_lambda_execution_role;
+                // result.
+                generatePublishProfile(result, config)
+                    .then(function() {
+                        resolve();
+                    })
+                    .catch(function(err) {
+                        reject(err);
+                    })
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+function generatePublishProfile(prompts, config) {
+    return new Promise(function(resolve, reject) {
+        var profile = {
+            environment: env,
+            toolName: "Alexa Skills Kit",
+            skillName: prompts.skillName,
+            skillInvocationName: prompts.skillInvocationName,
+            skillType: "Custom",
+            usesAudioPlayer: false,
+            skillOutputDirectory: "./ask",
+            sourceDirectory: "./lambda",
+            buildModelTimeout: 60000,
+            endpoint: {
+                type: prompts.lambdaFunctionName ? "lambda" : "https"
+            }
+        };
+
+        if (profile.endpoint.type === "lambda") {
+            getOrCreateLambdaFunction(prompts, config)
+                .then(function(lambda) {
+                    profile.endpoint.location = lambda.arn;
+                    savePublishProfile(prompts.profileName, profile)
+                        .then(function() {
+                            resolve(profile);
+                        }).catch(function(err) {
+                            reject("Error generating publish profile: " + err);
+                        });
+                })
+                .catch(function(err) {
+                    reject(err);
+                });
+        } else {
+            profile.endpoint.location = "<your endpoint here>";
+            savePublishProfile(prompts.profileName, profile)
+                .then(function() {
+                   resolve(profile);
+                }).catch(function(err) {
+                   reject("Error generating publish profile: " + err);
+                });
+        }
+    });
+}
+
+function getOrCreateLambdaFunction(prompts, config) {
+    return new Promise(function(resolve, reject) {
+        executeCmdSync("aws configure set aws_access_key_id " + config.aws_access_key_id + " --profile sutr", false, true);
+        executeCmdSync("aws configure set aws_secret_access_key " + config.aws_secret_access_key + " --profile sutr", false, true);
+        executeCmdSync("aws configure set output json --profile sutr", false, true);
+        executeCmdSync("aws configure set region " + config.region + " --profile sutr", false, true);
+
+        info("Getting details for Lambda function named \"" + prompts.lambdaFunctionName + "\" ...");
+
+        // if a lambda function with the given name already exists for the account
+        var lambda = executeCmdSync("aws lambda get-function --function-name " + prompts.lambdaFunctionName, false, false);
+        if (lambda) {
+            lambda = JSON.parse(lambda);
+            var arn = lambda.Configuration.FunctionArn;
+            comment("Using existing Lambda function \"" + prompts.lambdaFunctionName + "\": " + arn);
+            return resolve({
+                arn: arn
+            });
+        }
+
+        comment("A Lambda function with name \"" + prompts.lambdaFunctionName + "\" does not exist");
+
+        getNewFunctionConfiguration(config)
+            .then(function(lambdaConfig) {
+                info("Creating Lambda function \"" + prompts.lambdaFunctionName + "\" ...");
+
+                var starterZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
+                var starterZipFile = path.resolve(starterZipDestinationDir, "starter_" + lambdaConfig.lambdaFunctionRuntime + ".zip");
+                var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
+                mkdirp.sync(starterZipDestinationDir);
+
+                zipFolder(starterZipSourceDir, starterZipFile , function(err) {
+                    if(err) {
+                        return reject("An error occurred while creating lambda function: " + err);
+                    }
+
+                    // create AWS lambda function
+                    lambda = executeCmdSync(
+                        "aws lambda create-function " +
+                        "--function-name " + prompts.lambdaFunctionName + " " +
+                        "--runtime " + lambdaConfig.lambdaFunctionRuntime + " " +
+                        "--handler index.handler " +
+                        "--role " + lambdaConfig.lambdaFunctionRole + " " +
+                        "--zip-file fileb://" + starterZipFile + " " +
+                        "--description \"" + lambdaConfig.lamdaFunctionDescription + "\"", false, true);
+
+                    lambda = JSON.parse(lambda);
+                    if (lambda.FunctionArn) {
+                        success("Lambda function \"" + prompts.lambdaFunctionName + "\" sucessfully created: " + lambda.FunctionArn);
+                    }
+
+                    // Allow Alexa Skill Kit to call lambda function
+                    info("Adding permission to allow Alexa Skills Kit to invoke lambda function...");
+                    executeCmdSync(
+                        "aws lambda add-permission " +
+                        "--function-name " + prompts.lambdaFunctionName + " " +
+                        "--statement-id " + new Date().getTime() + " " +
+                        "--action \"lambda:InvokeFunction\" " +
+                        "--principal \"alexa-appkit.amazon.com\"", false, true);
+
+                    success("Access succesfully granted to Alexa Skills Kit!");
+
+                    resolve({
+                        arn: lambda.FunctionArn
+                    });
+                });
+            })
+            .catch(function(err) {
+                reject(err);
+            });
+    });
+}
+
+function savePublishProfile(profileName, profile) {
+    return new Promise(function(resolve, reject) {
+        mkdirp(profileOutputDir, function(err) {
+            if (err) {
+                return reject(err);
+            }
+
+            var profileFilePath = path.resolve(profileOutputDir, profileName + ".json");
+            fs.writeFileSync(profileFilePath, JSON.stringify(profile, null, 2));
+            success("Publish profile successfully created: " + profileFilePath);
+            resolve(profile);
         });
     });
 }
@@ -296,6 +567,10 @@ function loadPublishProfileConfiguration(config) {
 
 }
 
+function success(message) {
+    console.log(colors.success(message));
+}
+
 function info(message) {
     console.log(colors.info(message));
 }
@@ -309,8 +584,8 @@ function comment(message) {
 }
 
 function setUsageErrorAndExit(code, message) {
-    console.log(colors.error(message));
     showHelp();
+    console.log(colors.error(message));
     process.exit(code);
 }
 
@@ -321,6 +596,32 @@ function setErrorAndExit(code, message) {
     }
 
     process.exit(code);
+}
+
+function executeCmdSync(cmd, showOutput, exitOnFailure) {
+    if (typeof exitOnFailure === "undefined") {
+        exitOnFailure = true;
+    }
+
+    if (typeof showOutput === "undefined") {
+        showOutput = true;
+    }
+
+    try {
+        var output = child_process.execSync(cmd, {stdio: ["ignore"]});
+        if (showOutput) {
+            process.stdout.write(output);
+        }
+
+        return output || true;
+    } catch (e) {
+        if (exitOnFailure) {
+            process.stdout.write(e.message);
+            process.exit(500);
+        }
+
+        return undefined;
+    }
 }
 
 /**

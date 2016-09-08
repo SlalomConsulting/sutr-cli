@@ -182,7 +182,7 @@ casper.then(function createNewSkill() {
 });
 
 casper.then(function uploadIntents() {
-    var intentsJsonPath = publishProfile.publishDirectory.replace(/\/$/, "") + "/" + intentsFileName;
+    var intentsJsonPath = publishProfile.skillOutputDirectory.replace(/\/$/, "") + "/" + intentsFileName;
     if (!fs.isFile(intentsJsonPath)) {
         this.emit("step.error", {
             message: "Unable to find intents at \"" + intentsJsonPath + "\"",
@@ -268,7 +268,7 @@ casper.eachThen(getSlotDefinitions(), function(item) {
 });
 
 casper.then(function uploadUtterances() {
-    var utterancesFilePath = publishProfile.publishDirectory.replace(/\/$/, "") + "/" + utterancesFileName;
+    var utterancesFilePath = publishProfile.skillOutputDirectory.replace(/\/$/, "") + "/" + utterancesFileName;
     if (!fs.isFile(utterancesFilePath)) {
         this.emit("step.error", {
             message: "Unable to find intents at \"" + utterancesFilePath + "\"",
@@ -456,7 +456,7 @@ function saveChanges(context) {
 }
 
 function getSlotDefinitions() {
-    var slotTypeFilePath = publishProfile.publishDirectory.replace(/\/$/, "") + "/" + slotTypesFileName;
+    var slotTypeFilePath = publishProfile.skillOutputDirectory.replace(/\/$/, "") + "/" + slotTypesFileName;
     var slotTypesUploaded = false;
     var stream;
 

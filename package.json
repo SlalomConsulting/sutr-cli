@@ -15,8 +15,10 @@
     "command-line-args": "^3.0.1",
     "command-line-usage": "^3.0.3",
     "ini": "^1.3.4",
+    "mkdirp": "^0.5.1",
     "promise": "^7.1.1",
-    "prompt": "^1.0.0"
+    "prompt": "^1.0.0",
+    "zip-folder": "^1.0.0"
   },
   "keywords": [
     "alexa",
