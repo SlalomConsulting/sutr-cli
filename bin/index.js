@@ -39,6 +39,41 @@ colors.setTheme({
 
 executeCommand();
 
+function startLambdaDeployment(options, config) {
+    return new Promise(function(resolve, reject) {
+        if (!options.lambda) {
+            comment("Skipping publish of lambda.  Include --labmda command line argument to publish lambda code");
+            return resolve();
+        }
+
+        if (options.profile.endpoint.type !== "lambda") {
+            comment("Skipping publish of lambda.  The publish profile is not configured with a lambda function.");
+            return resolve();
+        }
+
+        info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
+
+        var uploadZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
+        var uploadZipFile = path.resolve(uploadZipDestinationDir, options.profileName + ".zip");
+        var uploadZipSourceDir = path.resolve(options.profile.sourceDirectory);
+        mkdirp.sync(uploadZipDestinationDir);
+
+        zipFolder(uploadZipSourceDir, uploadZipFile , function(err) {
+            if(err) {
+                return reject("An error occurred while creating zip file for upload: " + err);
+            }
+
+            // create AWS lambda function
+            lambda = executeCmdSync(
+                "aws --profile sutr lambda update-function-code " +
+                "--function-name " + options.profile.endpoint.location + " " +
+                "--zip-file fileb://" + uploadZipFile + " ", true, true);
+
+            success("Successfully uploaded code to Lambda function \"" + options.profile.endpoint.location);
+        });
+    });
+}
+
 function startSkillDeployment(options) {
     return new Promise(function(resolve, reject) {
         if (!options.skills) {
@@ -102,6 +137,7 @@ function executeCommand() {
         { name: "env", type: String },
         { name: "profile", type: String },
         { name: "skills", type: Boolean},
+        { name: "lambda", type: Boolean},
         { name: "help", type: Boolean }
     ];
 
@@ -119,14 +155,24 @@ function executeCommand() {
                 setErrorAndExit(500, err + "\n" + (err.stack || ""));
             });
     } else if (options.command === "publish") {
+        var config;
         loadPublishProfileConfiguration(options)
             .then(function() {
                 env = options.env || options.profile.environment;
                 return loadSutrConfiguration(options);
             })
             .then(function(allConfigs) {
-                var config = allConfigs[env];
-                if (!config || !config.skills_access_key_id || !config.skills_secret_access_key) {
+                config = allConfigs[env];
+                var missingConfiguration = false;
+                if (!config) {
+                    missingConfiguration = true;
+                } else if (options.skills && (!config.skills_access_key_id || !config.skills_secret_access_key)) {
+                    missingConfiguration = true;
+                } else if (options.lambda && (!config.aws_access_key_id || !config.aws_secret_access_key)) {
+                    missingConfiguration = true;
+                }
+
+                if (missingConfiguration) {
                     return setUsageErrorAndExit(400, "Configuration missing. Please call sutr configure to enable publishing");
                 }
 
@@ -136,6 +182,9 @@ function executeCommand() {
                 options.username = config.skills_access_key_id;
                 options.password = decrypt(config.skills_secret_access_key);
                 return startSkillDeployment(options);
+            })
+            .then(function() {
+                return startLambdaDeployment(options, config);
             })
             .then(function() {
                 process.exit(0);
@@ -581,6 +630,7 @@ function loadPublishProfileConfiguration(config) {
 
             comment("Loading publish profile at \"" + profilePath + "\" ...");
             var publishConfig = JSON.parse(fs.readFileSync(profilePath));
+            config.profileName = path.parse(absolutePath).name;
             config.profile = publishConfig;
             config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
             config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
