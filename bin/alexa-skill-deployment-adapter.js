@@ -30,6 +30,7 @@ var screenshotsDir = config.profile.skillOutputDirectory + "/casper/screenshots/
 var intentsFileName = "intents.json";
 var slotTypesFileName = "slot-definitions.txt";
 var utterancesFileName = "utterances.utr";
+var skillConfigFilePath = config.profile.skillConfigFilePath;
 
 if (fs.isFile(cookiesPath)) {
   phantom.cookies = JSON.parse(fs.read(cookiesPath));
@@ -354,6 +355,18 @@ casper.then(function configureEndpoint() {
 });
 
 casper.then(function() {
+    var skillConfig;
+    if (fs.exists(skillConfigFilePath)) {
+        this.echo("Updating skill config file at: " + skillConfigFilePath, "COMMENT");
+        skillConfig = JSON.parse(fs.read(skillConfigFilePath));
+    } else {
+        this.echo("Creating skill config file at: " + skillConfigFilePath, "COMMENT");
+        skillConfig = {};
+    }
+
+    skillConfig.applicationId = publishProfile.applicationId;
+    fs.write(skillConfigFilePath, JSON.stringify(skillConfig, null, 2), 'w');
+
     this.echo(
         "Successfully published Alexa Skills:\n" +
         "\tApplication Id: " + publishProfile.applicationId + "\n" +

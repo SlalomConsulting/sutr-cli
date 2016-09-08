@@ -109,6 +109,8 @@ function startSkillDeployment(options) {
             return resolve();
         }
 
+        options.profile.skillConfigFilePath = path.resolve(options.profile.skillConfigFilePath);
+
         var casperJS = spawn("casperjs", [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")], {stdio: "pipe"});
 
         casperJS.stdout.on("data", function(data){
@@ -519,6 +521,7 @@ function generatePublishProfile(prompts, config) {
             skillType: "Custom",
             usesAudioPlayer: false,
             skillOutputDirectory: "./deployment/ask",
+            skillConfigFilePath: "./lambda/config.json",
             sourceDirectory: "./lambda",
             buildModelTimeout: 60000,
             endpoint: {
