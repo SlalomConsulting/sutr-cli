@@ -559,7 +559,6 @@ function getSlotDefinitions() {
 
 function getIntentsFromSutrIntentModels(sutrIntents) {
     var intents = { };
-    utils.dump(sutrIntents);
     intents.intents = sutrIntents.sutrIntentModels.map(function(model) {
         return {
             intent: model.intentName,
@@ -572,6 +571,5 @@ function getIntentsFromSutrIntentModels(sutrIntents) {
         };
     });
 
-    utils.dump(intents);
     return JSON.stringify(intents, null, 2);
 }
