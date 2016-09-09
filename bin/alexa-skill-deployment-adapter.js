@@ -27,10 +27,12 @@ var config = loadConfiguration();
 var publishProfile = config.profile;
 var cookiesPath = config.profile.skillOutputDirectory + "/casper/cookies/" + config.username + ".json";
 var screenshotsDir = config.profile.skillOutputDirectory + "/casper/screenshots/";
-var intentsFileName = "intents.json";
-var slotTypesFileName = "slot-definitions.txt";
-var utterancesFileName = "utterances.utr";
+var intentsFileName = "intentName.json";
+var slotTypesFileName = "custom.types";
+var utterancesFileName = "skill.utr";
 var skillConfigFilePath = config.profile.skillConfigFilePath;
+var MAX_UTTERANCE_FILE_SIZE = 200000;
+var MAX_UTTERANCE_FILE_SIZE_FRIENDLY = "200K";
 
 if (fs.isFile(cookiesPath)) {
   phantom.cookies = JSON.parse(fs.read(cookiesPath));
@@ -199,7 +201,8 @@ casper.then(function uploadIntents() {
 
     var intentsJson;
     try {
-        intentsJson = JSON.stringify(JSON.parse(fs.read(intentsJsonPath)));
+        var slalomIntentModelsJson = JSON.parse(fs.read(intentsJsonPath));
+        intentsJson = getIntentsFromSutrIntentModels(slalomIntentModelsJson);
     } catch (e) {
         this.emit("step.error", {
             message: "Error loading \"" + intentsJsonPath + "\"\nReason:" + (e || "Unknown"),
@@ -285,6 +288,16 @@ casper.then(function uploadUtterances() {
 
     var utterances;
     try {
+        var utteranceFileSize = fs.size(utterancesFilePath);
+        if (utteranceFileSize > MAX_UTTERANCE_FILE_SIZE) {
+            this.echo(
+                "Warning: Your utterance file is " + utteranceFileSize + " bytes in size, " +
+                "which exceeds the " + MAX_UTTERANCE_FILE_SIZE_FRIENDLY + " limit!  " +
+                "Consider reducing the combinations and sample size and validating input in the business logic",
+                "WARNING"
+            );
+        }
+
         utterances = fs.read(utterancesFilePath);
     } catch (e) {
         this.emit("step.error", {
@@ -293,7 +306,7 @@ casper.then(function uploadUtterances() {
         });
     }
 
-    this.echo("Uploading intents from \"" + utterancesFilePath + "\" ...");
+    this.echo("Uploading utterances from \"" + utterancesFilePath + "\" ...");
 
     this.evaluate(function(utterances) {
         // This is how we simulate copy/pasting code into the CodeMirror text area.
@@ -542,4 +555,23 @@ function getSlotDefinitions() {
             stream.close();
         }
     }
+}
+
+function getIntentsFromSutrIntentModels(sutrIntents) {
+    var intents = { };
+    utils.dump(sutrIntents);
+    intents.intents = sutrIntents.sutrIntentModels.map(function(model) {
+        return {
+            intent: model.intentName,
+            slots: model.slots.map(function(sutrSlotModel) {
+               return {
+                    name: sutrSlotModel.slotName,
+                   type: sutrSlotModel.slotType
+               };
+            })
+        };
+    });
+
+    utils.dump(intents);
+    return JSON.stringify(intents, null, 2);
 }
