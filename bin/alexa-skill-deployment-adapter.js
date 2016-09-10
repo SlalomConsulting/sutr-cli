@@ -27,7 +27,7 @@ var config = loadConfiguration();
 var publishProfile = config.profile;
 var cookiesPath = config.profile.skillOutputDirectory + "/casper/cookies/" + config.username + ".json";
 var screenshotsDir = config.profile.skillOutputDirectory + "/casper/screenshots/";
-var intentsFileName = "intentName.json";
+var intentsFileName = "intents.json";
 var slotTypesFileName = "custom.types";
 var utterancesFileName = "skill.utr";
 var skillConfigFilePath = config.profile.skillConfigFilePath;
@@ -201,8 +201,7 @@ casper.then(function uploadIntents() {
 
     var intentsJson;
     try {
-        var slalomIntentModelsJson = JSON.parse(fs.read(intentsJsonPath));
-        intentsJson = getIntentsFromSutrIntentModels(slalomIntentModelsJson);
+        var intentsJson = JSON.stringify(JSON.parse(fs.read(intentsJsonPath)), null, 2);
     } catch (e) {
         this.emit("step.error", {
             message: "Error loading \"" + intentsJsonPath + "\"\nReason:" + (e || "Unknown"),
@@ -555,21 +554,4 @@ function getSlotDefinitions() {
             stream.close();
         }
     }
-}
-
-function getIntentsFromSutrIntentModels(sutrIntents) {
-    var intents = { };
-    intents.intents = sutrIntents.sutrIntentModels.map(function(model) {
-        return {
-            intent: model.intentName,
-            slots: model.slots.map(function(sutrSlotModel) {
-               return {
-                    name: sutrSlotModel.slotName,
-                   type: sutrSlotModel.slotType
-               };
-            })
-        };
-    });
-
-    return JSON.stringify(intents, null, 2);
 }

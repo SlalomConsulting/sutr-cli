@@ -29,6 +29,7 @@ var supportedRuntimes = ["nodejs", "nodejs4.3", "java8", "python2.7"];
 var defaultRuntime = supportedRuntimes[1];
 var defaultRegion = "us-east-1";
 var profileOutputDir = path.resolve("./deployment/profiles");
+var sutrIntentModelsFileName = "intentName.json";
 
 
 colors.setTheme({
@@ -109,8 +110,6 @@ function startSkillDeployment(options) {
             return resolve();
         }
 
-        options.profile.skillConfigFilePath = path.resolve(options.profile.skillConfigFilePath);
-
         var casperJS = spawn("casperjs", [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")], {stdio: "pipe"});
 
         casperJS.stdout.on("data", function(data){
@@ -139,6 +138,7 @@ function showHelp() {
             header: 'Usage',
             content:
                 "$ sutr configure [--env envName]\n" +
+                "$ sutr build --profile file\n" +
                 "$ sutr publish --profile file [--skills] [--lambda]\n"
         },
         {
@@ -182,6 +182,17 @@ function executeCommand() {
     if (options.command === "configure") {
         setSutrConfiguration()
             .catch(function(err) {
+                setErrorAndExit(500, err + "\n" + (err.stack || ""));
+            });
+    } else if(options.command === "build") {
+        loadPublishProfileConfiguration(options)
+            .then(function() {
+                return loadSutrIntentModel(options);
+            })
+            .then(function(intentModel) {
+                options.sutrIntentModel = intentModel;
+                return createRoutesConfig(options);
+            }).catch(function(err) {
                 setErrorAndExit(500, err + "\n" + (err.stack || ""));
             });
     } else if (options.command === "publish") {
@@ -520,8 +531,9 @@ function generatePublishProfile(prompts, config) {
             skillInvocationName: prompts.skillInvocationName,
             skillType: "Custom",
             usesAudioPlayer: false,
-            skillOutputDirectory: "./deployment/ask",
+            skillOutputDirectory: "./out/ask",
             skillConfigFilePath: "./lambda/config.json",
+            skillRouteConfigFilePath: "./lambda/intentRoutes.json",
             sourceDirectory: "./lambda",
             buildModelTimeout: 60000,
             endpoint: {
@@ -665,6 +677,9 @@ function loadPublishProfileConfiguration(config) {
             config.profile = publishConfig;
             config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
             config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
+            config.profile.skillConfigFilePath = path.resolve(config.profile.skillConfigFilePath);
+            config.profile.skillRouteConfigFilePath = path.resolve(config.profile.skillRouteConfigFilePath);
+
             info(JSON.stringify(publishConfig, null, 2));
         } catch (e) {
             setErrorAndExit(400, "Error loading profile: " + e);
@@ -673,6 +688,55 @@ function loadPublishProfileConfiguration(config) {
         resolve();
     });
 
+}
+
+function loadSutrIntentModel(options) {
+    return new Promise(function(resolve) {
+        var sutrIntentModelFilePath = path.resolve(options.profile.skillOutputDirectory, sutrIntentModelsFileName);
+        if (fs.accessSync(sutrIntentModelFilePath, fs.F_OK)) {
+            return setErrorAndExit(400, "Unable to load sutr models at: \"" + sutrIntentModelsFileName + "\".");
+        }
+
+        var sutrIntentModels = JSON.parse(fs.readFileSync(sutrIntentModelFilePath));
+        return resolve(sutrIntentModels);
+    });
+}
+
+function createRoutesConfig(options) {
+    return new Promise(function(resolve) {
+        info("Generating route configuration...");
+        try {
+            mkdirp.sync(options.profile.skillRouteConfigFilePath);
+            var routesConfig = {
+                routes: {}
+            };
+
+            options.sutrIntentModel.sutrIntentModels.forEach(function(model) {
+                routesConfig.routes[model.intentName] = model.functionName;
+            });
+
+            fs.writeFileSync(options.profile.skillRouteConfigFilePath, JSON.stringify(routesConfig, null, 2));
+        } catch(e) {
+            return setErrorAndExit(500, "Error generating route configuration: " + e + "\".");
+        }
+    });
+}
+
+function getIntentsFromSutrIntentModels(sutrIntents) {
+    var intents = { };
+    intents.intents = sutrIntents.sutrIntentModels.map(function(model) {
+        return {
+            intent: model.intentName,
+            slots: model.slots.map(function(sutrSlotModel) {
+                return {
+                    name: sutrSlotModel.slotName,
+                    type: sutrSlotModel.slotType
+                };
+            })
+        };
+    });
+
+    return JSON.stringify(intents, null, 2);
 }
 
 function success(message) {
