@@ -4,7 +4,7 @@
  * This is a NodeJS script that is intended to provide a command line interface for the deployment of Alexa Skills for use with npm.
  */
 
-var fs = require("fs");
+var fs = require("fs-extra");
 var os = require("os");
 var path = require("path");
 var ini = require("ini");
@@ -42,6 +42,17 @@ colors.setTheme({
     comment: "yellow"
 });
 
+fs.fileExistsSync = function(path) {
+    var exists = true;
+    try {
+        fs.accessSync(path, fs.F_OK);
+    } catch(e) {
+        exists = false;
+    }
+
+    return exists;
+};
+
 executeCommand();
 
 function startLambdaDeployment(options, config) {
@@ -75,12 +86,35 @@ function startLambdaDeployment(options, config) {
                 return Promise.denodeify(ncp)("./node_modules", path.resolve(uploadStagingDir, "node_modules"));
             })
             .then(function() {
+                // merge any existing config.json with the config.json from the temp directory
+                // existing config values will be favored over temp config values
+                var exitingConfigFilePath = path.resolve(options.profile.sourceDirectory, options.profile.skillConfigFilePath);
+                var mergedConfigFilePath = path.resolve(uploadStagingDir, options.profile.skillConfigFilePath);
+                var existingConfig;
+                if (fs.fileExistsSync(exitingConfigFilePath)) {
+                    existingConfig = fs.readJsonSync(exitingConfigFilePath);
+                } else {
+                    existingConfig = {};
+                }
+
+                var tempConfig = fs.readJsonSync(path.resolve(options.profile.skillOutputDirectory, options.profile.skillConfigFilePath)) || {};
+                var mergedConfig = Object.assign(tempConfig, existingConfig);
+                fs.writeJsonSync(mergedConfigFilePath, mergedConfig);
+
+                // copy intentRoutes.json into the zip location
+                fs.copySync(
+                    options.profile.tempSkillRouteConfigFilePath,
+                    path.resolve(uploadStagingDir, options.profile.skillRouteConfigFilePath)
+                );
+            })
+            .then(function() {
                 return Promise.denodeify(zipDir)(uploadStagingDir, { saveTo: uploadZipFile });
             })
             .catch(function(err) {
                 setErrorAndExit(500, "Error packaging source code for upload" + err);
             })
             .then(function(){
+                info("Successfully created package for lambda upload at: " + uploadZipFile);
                 info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
 
                 executeCmdSync("aws configure set aws_access_key_id " + config.aws_access_key_id + " --profile sutr", false, true);
@@ -306,15 +340,7 @@ function tryMakeSutrDirectory() {
 function loadSutrConfiguration() {
     return new Promise(function(resolve) {
         var config = {};
-
-        var configFileExists = true;
-        try {
-            fs.accessSync(sutrConfigFilePath, fs.F_OK);
-        } catch(e) {
-            configFileExists = false;
-        }
-
-        if (configFileExists) {
+        if (fs.fileExistsSync(sutrConfigFilePath)) {
             config = ini.parse(fs.readFileSync(sutrConfigFilePath, "utf-8"));
         }
 
@@ -587,8 +613,8 @@ function generatePublishProfile(prompts, config) {
             skillType: "Custom",
             usesAudioPlayer: false,
             skillOutputDirectory: "./out/ask",
-            skillConfigFilePath: "./lambda/config.json",
-            skillRouteConfigFilePath: "./lambda/intentRoutes.json",
+            skillConfigFilePath: "config.json",
+            skillRouteConfigFilePath: "intentRoutes.json",
             sourceDirectory: "./lambda",
             buildModelTimeout: 60000,
             endpoint: {
@@ -733,7 +759,8 @@ function loadPublishProfileConfiguration(config) {
 
                 try {
                     var absolutePath = path.resolve(profilePath);
-                    if (fs.accessSync(absolutePath, fs.F_OK)) {
+
+                    if (!fs.fileExistsSync(absolutePath)) {
                         setErrorAndExit(400, "Error loading profile: file does not exist or access is denied: \"" + absolutePath + "\".");
                         return resolve();
                     }
@@ -744,10 +771,9 @@ function loadPublishProfileConfiguration(config) {
                     config.profile = publishConfig;
                     config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
                     config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
-                    config.profile.skillConfigFilePath = path.resolve(config.profile.skillConfigFilePath);
-                    config.profile.skillRouteConfigFilePath = path.resolve(config.profile.skillRouteConfigFilePath);
-
                     info(JSON.stringify(publishConfig, null, 2));
+                    config.profile.tempSkillConfigFilePath = path.resolve(config.profile.skillOutputDirectory, config.profile.skillConfigFilePath);
+                    config.profile.tempSkillRouteConfigFilePath = path.resolve(config.profile.skillOutputDirectory, config.profile.skillRouteConfigFilePath);
                 } catch (e) {
                     setErrorAndExit(400, "Error loading profile: " + e);
                 }
@@ -764,7 +790,7 @@ function loadPublishProfileConfiguration(config) {
 function loadSutrIntentModel(options) {
     return new Promise(function(resolve) {
         var sutrIntentModelFilePath = path.resolve(options.profile.skillOutputDirectory, sutrIntentModelsFileName);
-        if (fs.accessSync(sutrIntentModelFilePath, fs.F_OK)) {
+        if (!fs.fileExistsSync(sutrIntentModelFilePath)) {
             return setErrorAndExit(400, "Unable to load sutr models at: \"" + sutrIntentModelsFileName + "\".");
         }
 
@@ -777,7 +803,7 @@ function createRoutesConfig(options) {
     return new Promise(function(resolve) {
         info("Generating route configuration...");
         try {
-            mkdirp.sync(path.dirname(options.profile.skillRouteConfigFilePath));
+            mkdirp.sync(path.dirname(options.profile.tempSkillRouteConfigFilePath));
             var routesConfig = {
                 routes: {}
             };
@@ -786,7 +812,7 @@ function createRoutesConfig(options) {
                 routesConfig.routes[model.intentName] = model.functionName;
             });
 
-            fs.writeFileSync(options.profile.skillRouteConfigFilePath, JSON.stringify(routesConfig, null, 2));
+            fs.writeFileSync(options.profile.tempSkillRouteConfigFilePath, JSON.stringify(routesConfig, null, 2));
         } catch(e) {
             return setErrorAndExit(500, "Error generating route configuration: " + e + "\".");
         }

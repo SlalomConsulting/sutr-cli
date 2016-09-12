@@ -30,7 +30,7 @@ var screenshotsDir = config.profile.skillOutputDirectory + "/casper/screenshots/
 var intentsFileName = "intents.json";
 var slotTypesFileName = "custom.types";
 var utterancesFileName = "skill.utr";
-var skillConfigFilePath = config.profile.skillConfigFilePath;
+var skillConfigFilePath = config.profile.tempSkillConfigFilePath;
 var MAX_UTTERANCE_FILE_SIZE = 200000;
 var MAX_UTTERANCE_FILE_SIZE_FRIENDLY = "200K";
 
