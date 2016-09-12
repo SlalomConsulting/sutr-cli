@@ -718,7 +718,17 @@ function loadPublishProfileConfiguration(config) {
                 var profilePath = config.profile;
 
                 if (!profilePath) {
-                    profilePath = path.resolve(profileOutputDir, allConfigs[env].default_profile + ".json");
+                    var defaultConfig = allConfigs["default"];
+                    if (!defaultConfig) {
+                        return setErrorAndExit(400, "Please run \"sutr configure\" to set up your default profile or use the --profile option");
+                    }
+
+                    var defaultProfilePath = defaultConfig.default_profile;
+                    if (!defaultProfilePath) {
+                        return setErrorAndExit(400, "Please run \"sutr configure\" to set up your default profile or use the --profile option");
+                    }
+
+                    profilePath = path.resolve(profileOutputDir, defaultProfilePath + ".json");
                 }
 
                 try {
