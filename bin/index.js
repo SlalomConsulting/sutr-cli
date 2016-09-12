@@ -30,6 +30,7 @@ var defaultRuntime = supportedRuntimes[1];
 var defaultRegion = "us-east-1";
 var profileOutputDir = path.resolve("./deployment/profiles");
 var sutrIntentModelsFileName = "intentName.json";
+var intentsFileName = "intents.json";
 
 
 colors.setTheme({
@@ -138,8 +139,8 @@ function showHelp() {
             header: 'Usage',
             content:
                 "$ sutr configure [--env envName]\n" +
-                "$ sutr build --profile file\n" +
-                "$ sutr publish --profile file [--skills] [--lambda]\n"
+                "$ sutr build [--profile file]\n" +
+                "$ sutr publish [--profile file] [--skills] [--lambda]\n"
         },
         {
             header: 'Options',
@@ -192,7 +193,11 @@ function executeCommand() {
             .then(function(intentModel) {
                 options.sutrIntentModel = intentModel;
                 return createRoutesConfig(options);
-            }).catch(function(err) {
+            })
+            .then(function() {
+                return createIntentsFile(options);
+            })
+            .catch(function(err) {
                 setErrorAndExit(500, err + "\n" + (err.stack || ""));
             });
     } else if (options.command === "publish") {
@@ -263,7 +268,10 @@ function setSutrConfiguration() {
             })
             .then(function() {
                 title("Step 3: Create a Publish Profile");
-                return createPublishProfile(config);
+                return createPublishProfile(config, allConfigs["default"]);
+            })
+            .then(function() {
+                return saveSutrConfiguration(allConfigs);
             })
             .then(function() {
                 resolve();
@@ -458,10 +466,11 @@ function getNewFunctionConfiguration(config) {
     });
 }
 
-function createPublishProfile(config) {
+function createPublishProfile(config, defaultConfig) {
     return new Promise(function(resolve){
         comment("A publish profile is used to configure a deployment for a skill.");
         info("Enter a profile name below to create a new profile");
+        var availableProfiles = getAvailableProfiles();
 
         prompt.message = "";
         prompt.start();
@@ -497,6 +506,42 @@ function createPublishProfile(config) {
                     ask: function() {
                         return prompt.history("profileName").value;
                     }
+                },
+                useNewProfileAsDefault: {
+                    pattern: /^(yes|y|no|n)$/i,
+                    description: "Use as default profile? [yes]",
+                    message: "yes/y, no/n?",
+                    before: function(value) {
+                        if (!value) {
+                            return true;
+                        }
+
+                        if (value.toLowerCase() === "yes" || value.toLowerCase() === "y") {
+                            return true;
+                        }
+
+                        return false;
+                    },
+                    ask: function() {
+                        return prompt.history("profileName").value;
+                    }
+                },
+                defaultProfileName: {
+                    description: "Default Profile" + (defaultConfig.default_profile ? " [" + defaultConfig.default_profile + "]" : " [None]"),
+                    message: "\nAvailable Profiles: " + availableProfiles
+                        .map(function(profileName) {
+                            return "\n   " + profileName;
+                        })
+                        .join(""),
+                    before: function(value) {
+                        return value || defaultConfig.default_profile;
+                    },
+                    conform: function(value) {
+                        return availableProfiles.indexOf(value) !== -1;
+                    },
+                    ask: function() {
+                        return !prompt.history("profileName").value;
+                    }
                 }
             }
         }, function (err, result) {
@@ -505,9 +550,13 @@ function createPublishProfile(config) {
                 return process.exit(400);
             }
 
+            if (result.useNewProfileAsDefault) {
+                defaultConfig.default_profile = result.profileName;
+            } else if (result.defaultProfileName) {
+                defaultConfig.default_profile = result.defaultProfileName;
+            }
+
             if (result.profileName) {
-                // result.lambdaFunctionRole = result.lambdaFunctionRole || config.aws_lambda_execution_role;
-                // result.
                 generatePublishProfile(result, config)
                     .then(function() {
                         resolve();
@@ -519,6 +568,12 @@ function createPublishProfile(config) {
                 resolve();
             }
         });
+    });
+}
+
+function getAvailableProfiles() {
+    return fs.readdirSync(profileOutputDir).map(function(profilePaths) {
+        return path.parse(profilePaths).name;
     });
 }
 
@@ -657,35 +712,41 @@ function savePublishProfile(profileName, profile) {
 
 function loadPublishProfileConfiguration(config) {
     return new Promise(function(resolve) {
-        var profilePath = config.profile;
+        env = "default";
+        loadSutrConfiguration()
+            .then(function(allConfigs) {
+                var profilePath = config.profile;
 
-        if (!profilePath) {
-            setUsageErrorAndExit(400, "A publish profile is required! Use --profile=<path/to/profile>");
-            return resolve();
-        }
+                if (!profilePath) {
+                    profilePath = path.resolve(profileOutputDir, allConfigs[env].default_profile + ".json");
+                }
 
-        try {
-            var absolutePath = path.resolve(profilePath);
-            if (fs.accessSync(absolutePath, fs.F_OK)) {
-                setErrorAndExit(400, "Error loading profile: file does not exist or access is denied: \"" + absolutePath + "\".");
-                return resolve();
-            }
+                try {
+                    var absolutePath = path.resolve(profilePath);
+                    if (fs.accessSync(absolutePath, fs.F_OK)) {
+                        setErrorAndExit(400, "Error loading profile: file does not exist or access is denied: \"" + absolutePath + "\".");
+                        return resolve();
+                    }
 
-            comment("Loading publish profile at \"" + profilePath + "\" ...");
-            var publishConfig = JSON.parse(fs.readFileSync(profilePath));
-            config.profileName = path.parse(absolutePath).name;
-            config.profile = publishConfig;
-            config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
-            config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
-            config.profile.skillConfigFilePath = path.resolve(config.profile.skillConfigFilePath);
-            config.profile.skillRouteConfigFilePath = path.resolve(config.profile.skillRouteConfigFilePath);
+                    comment("Loading publish profile at \"" + profilePath + "\" ...");
+                    var publishConfig = JSON.parse(fs.readFileSync(profilePath));
+                    config.profileName = path.parse(absolutePath).name;
+                    config.profile = publishConfig;
+                    config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
+                    config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
+                    config.profile.skillConfigFilePath = path.resolve(config.profile.skillConfigFilePath);
+                    config.profile.skillRouteConfigFilePath = path.resolve(config.profile.skillRouteConfigFilePath);
 
-            info(JSON.stringify(publishConfig, null, 2));
-        } catch (e) {
-            setErrorAndExit(400, "Error loading profile: " + e);
-        }
+                    info(JSON.stringify(publishConfig, null, 2));
+                } catch (e) {
+                    setErrorAndExit(400, "Error loading profile: " + e);
+                }
 
-        resolve();
+                resolve();
+            })
+            .catch(function(err) {
+                reject(err);
+            });
     });
 
 }
@@ -706,7 +767,7 @@ function createRoutesConfig(options) {
     return new Promise(function(resolve) {
         info("Generating route configuration...");
         try {
-            mkdirp.sync(options.profile.skillRouteConfigFilePath);
+            mkdirp.sync(path.dirname(options.profile.skillRouteConfigFilePath));
             var routesConfig = {
                 routes: {}
             };
@@ -719,6 +780,23 @@ function createRoutesConfig(options) {
         } catch(e) {
             return setErrorAndExit(500, "Error generating route configuration: " + e + "\".");
         }
+
+        resolve();
+    });
+}
+
+function createIntentsFile(options) {
+    return new Promise(function(resolve) {
+       info("Generating intents from Sutr intents model...");
+        try {
+            mkdirp.sync(options.profile.skillOutputDirectory);
+            var intents = getIntentsFromSutrIntentModels(options.sutrIntentModel);
+            fs.writeFileSync(path.resolve(options.profile.skillOutputDirectory, intentsFileName), intents);
+        } catch(e) {
+            return setErrorAndExit(500, "Error generating intents: " + e + "\".");
+        }
+
+        resolve();
     });
 }
 
