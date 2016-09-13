@@ -118,7 +118,10 @@ casper.then(function checkForExistingSkillAndRemove() {
     this.waitFor(function checkForExistingPublishedSkill() {
         return this.evaluate(function(publishProfile){
             try {
-                return $('.CellAppName:contains("' + publishProfile.skillName + '")').length > 0;
+                return $('div.edw-applist span.edw-applist-app-skillname')
+                            .filter(function() {
+                                return $(this).text() === publishProfile.skillName;
+                            }).length > 0;
             } catch(e) {
                 return false;
             }
@@ -134,9 +137,12 @@ casper.then(function checkForExistingSkillAndRemove() {
 casper.then(function deleteExistingSkill() {
     this.echo("Removing skill \"" + publishProfile.skillName + "\"...", "COMMENT");
     this.evaluate(function(publishProfile) {
-        $('.EDW_AppList span.CellAppName:contains("' + publishProfile.skillName + '")')
-            .closest("tr")
-            .find('button:contains("Delete")')
+        $('div.edw-applist span.edw-applist-app-skillname')
+            .filter(function() {
+                return $(this).text() === publishProfile.skillName;
+            })
+            .parent()
+            .find('.edw-applist-app-action:contains("Delete")')
             .click();
     }, publishProfile);
     this.waitFor(function waitForConfirmationDialog() {
