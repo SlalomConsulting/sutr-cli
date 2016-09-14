@@ -19,7 +19,7 @@ var util = require("util");
 var mkdirp = require("mkdirp");
 var zipDir = require("zip-dir");
 var ncp = require("ncp").ncp;
-ncp.limit = 16;
+ncp.limit = 300;
 var rmdir = require("rimraf");
 
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
