@@ -235,7 +235,7 @@ function executeCommand() {
                 setErrorAndExit(500, err + "\n" + (err.stack || ""));
             });
     } else if(options.command === "build") {
-        loadPublishProfileConfiguration(options)
+        loadPublishProfileConfiguration(options, false)
             .then(function() {
                 return loadSutrIntentModel(options);
             })
@@ -254,7 +254,7 @@ function executeCommand() {
             });
     } else if (options.command === "publish") {
         var config;
-        loadPublishProfileConfiguration(options)
+        loadPublishProfileConfiguration(options, true)
             .then(function() {
                 env = options.env || options.profile.environment;
                 return loadSutrConfiguration(options);
@@ -754,7 +754,7 @@ function savePublishProfile(profileName, profile) {
     });
 }
 
-function loadPublishProfileConfiguration(config) {
+function loadPublishProfileConfiguration(config, showProfile) {
     return new Promise(function(resolve) {
         env = "default";
         loadSutrConfiguration()
@@ -789,7 +789,11 @@ function loadPublishProfileConfiguration(config) {
                     config.profile = publishConfig;
                     config.profile.sourceDirectory = path.resolve(config.profile.sourceDirectory);
                     config.profile.skillOutputDirectory = path.resolve(config.profile.skillOutputDirectory);
-                    info(JSON.stringify(publishConfig, null, 2));
+
+                    if (showProfile) {
+                        info(JSON.stringify(publishConfig, null, 2));
+                    }
+
                     config.profile.tempSkillConfigFilePath = path.resolve(config.profile.skillOutputDirectory, config.profile.skillConfigFilePath);
                     config.profile.tempSkillRouteConfigFilePath = path.resolve(config.profile.skillOutputDirectory, config.profile.skillRouteConfigFilePath);
                 } catch (e) {
