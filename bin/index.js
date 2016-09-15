@@ -19,7 +19,7 @@ var util = require("util");
 var mkdirp = require("mkdirp");
 var zipDir = require("zip-dir");
 var ncp = require("ncp").ncp;
-ncp.limit = 300;
+ncp.limit = 1000;
 var rmdir = require("rimraf");
 
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
@@ -119,7 +119,26 @@ function startLambdaDeployment(options, config) {
                     existingConfig = {};
                 }
 
-                var tempConfig = fs.readJsonSync(path.resolve(options.profile.skillOutputDirectory, options.profile.skillConfigFilePath)) || {};
+                var tempConfig;
+                var tempConfigFilePath = path.resolve(options.profile.skillOutputDirectory, options.profile.skillConfigFilePath);
+                if (fs.fileExistsSync(tempConfigFilePath)) {
+                    tempConfig = fs.readJsonSync(tempConfigFilePath);
+                    if (typeof tempConfig.applicationId === "undefined") {
+                        warning(
+                            "An application id has not been configured for this skill.\n" +
+                            "This prevents verification of the application id and leaves your skill less secure!\n" +
+                            "Make sure you've run \"sutr build && sutr publish --skills\" to correctly generate the application id configruation for your skill."
+                        );
+                    }
+                } else {
+                    warning(
+                        "A generated config file could not be found at: \"" + tempConfigFilePath + "\"\n" +
+                        "Make sure you've run \"sutr build && sutr publish --skills\" to correctly generate the application id configruation for your skill."
+                    );
+
+                    tempConfig = {};
+                }
+
                 var mergedConfig = Object.assign(tempConfig, existingConfig);
                 fs.writeJsonSync(mergedConfigFilePath, mergedConfig);
                 elapsedTime = new Date().getTime() - startTime;
@@ -265,6 +284,9 @@ function executeCommand() {
             })
             .then(function() {
                 return createIntentsFile(options);
+            })
+            .then(function() {
+                return createEmptyConfigFile(options);
             })
             .catch(function(err) {
                 setErrorAndExit(500, err + "\n" + (err.stack || ""));
@@ -856,6 +878,15 @@ function createRoutesConfig(options) {
     });
 }
 
+function createEmptyConfigFile(options) {
+    return new Promise(function(resolve) {
+        // Create an empty config file allow graceful warning when configuration of application ID is unavailable.
+        var tempConfigFilePath = path.resolve(options.profile.skillOutputDirectory, options.profile.skillConfigFilePath);
+        fs.writeJsonSync(tempConfigFilePath, {});
+        resolve();
+    });
+}
+
 function createIntentsFile(options) {
     return new Promise(function(resolve) {
        info("Generating intents from Sutr intents model...");
@@ -896,6 +927,10 @@ function debug(message) {
     console.log(colors.debug(message));
 }
 
+function warning(message) {
+    process.stderr.write(colors.warning("WARNING: " + message + "\n"));
+}
+
 function info(message) {
     console.log(colors.info(message));
 }
@@ -910,12 +945,12 @@ function comment(message) {
 
 function setUsageErrorAndExit(code, message) {
     showHelp();
-    console.log(colors.error(message));
+    process.stderr.write(colors.error(message) + "\n");
     process.exit(code);
 }
 
 function setErrorAndExit(code, message) {
-    console.log(colors.error(message));
+    process.stderr.write(colors.error(message) + "\n");
     if (message && message.stack) {
         console.log(colors.error(message.stack));
     }
