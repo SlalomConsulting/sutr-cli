@@ -16,7 +16,6 @@ var spawn = child_process.spawn;
 var commandLineArgs = require("command-line-args"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var getUsage = require("command-line-usage"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var util = require("util");
-var mkdirp = require("mkdirp");
 var zipDir = require("zip-dir");
 
 
@@ -72,41 +71,18 @@ function startLambdaDeployment(options, config) {
         var uploadZipSourceDir = path.resolve(options.profile.sourceDirectory);
         info("Packaging zip of source code for upload to Lambda: " + uploadZipSourceDir);
 
-        var startTime = new Date().getTime();
-        var elapsedTime;
         // Remove any possible existing files left over from a previous upload
-        debug("Removing any existing upload directory...");
         Promise.denodeify(fs.remove)(uploadStagingDir)
             .then(function(){
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
-                debug("Creating upload directory");
-                mkdirp.sync(uploadStagingDir);
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
+                fs.mkdirsSync(uploadStagingDir);
                 // copy lambda source code to temporary upload directory
-                debug("Copying Lambda code to temp directory...");
                 return Promise.denodeify(fs.copy)(uploadZipSourceDir, uploadStagingDir)
             })
             .then(function(){
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
-
-                // TODO: only copy over dependencies (i.e. NOT devDependencies)
                 // copy the node_modules from the source directory to resolve dependencies for lambda code
-                debug("Copying node_modules to temp directory...");
-
                 return copyNodeModules("./", path.resolve(uploadStagingDir), { devDependencies: false });
             })
             .then(function() {
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
-
-                debug("Merging config.js file from output directory to temp directory...");
                 // merge any existing config.json with the config.json from the temp directory
                 // existing config values will be favored over temp config values
                 var exitingConfigFilePath = path.resolve(options.profile.sourceDirectory, options.profile.skillConfigFilePath);
@@ -140,33 +116,19 @@ function startLambdaDeployment(options, config) {
 
                 var mergedConfig = Object.assign(tempConfig, existingConfig);
                 fs.writeJsonSync(mergedConfigFilePath, mergedConfig);
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
-
-                debug("Copying route config from output directory to temp directory...");
                 // copy intentRoutes.json into the zip location
                 fs.copySync(
                     options.profile.tempSkillRouteConfigFilePath,
                     path.resolve(uploadStagingDir, options.profile.skillRouteConfigFilePath)
                 );
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
             })
             .then(function() {
-                debug("Zipping temp directory...");
                 return Promise.denodeify(zipDir)(uploadStagingDir, { saveTo: uploadZipFile });
             })
             .catch(function(err) {
                 setErrorAndExit(500, "Error packaging source code for upload" + err);
             })
             .then(function(){
-                elapsedTime = new Date().getTime() - startTime;
-                startTime = new Date().getTime();
-                debug("Elapsed Time: " + elapsedTime + "ms");
-                process.exit(0);
-
                 info("Successfully created package for lambda upload at: " + uploadZipFile);
                 info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
 
@@ -733,7 +695,7 @@ function getOrCreateLambdaFunction(prompts, config) {
                 var starterZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
                 var starterZipFile = path.resolve(starterZipDestinationDir, "starter_" + lambdaConfig.lambdaFunctionRuntime + ".zip");
                 var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
-                mkdirp.sync(starterZipDestinationDir);
+                fs.mkdirsSync(starterZipDestinationDir);
 
                 zipDir(starterZipSourceDir, { saveTo: starterZipFile } , function(err) {
                     if(err) {
@@ -779,7 +741,7 @@ function getOrCreateLambdaFunction(prompts, config) {
 
 function savePublishProfile(profileName, profile) {
     return new Promise(function(resolve, reject) {
-        mkdirp(profileOutputDir, function(err) {
+        fs.mkdirs(profileOutputDir, function(err) {
             if (err) {
                 return reject(err);
             }
@@ -859,7 +821,7 @@ function createRoutesConfig(options) {
     return new Promise(function(resolve) {
         info("Generating route configuration...");
         try {
-            mkdirp.sync(path.dirname(options.profile.tempSkillRouteConfigFilePath));
+            fs.mkdirsSync(path.dirname(options.profile.tempSkillRouteConfigFilePath));
             var routesConfig = {
                 routes: {}
             };
@@ -890,7 +852,7 @@ function createIntentsFile(options) {
     return new Promise(function(resolve) {
        info("Generating intents from Sutr intents model...");
         try {
-            mkdirp.sync(options.profile.skillOutputDirectory);
+            fs.mkdirsSync(options.profile.skillOutputDirectory);
             var intents = getIntentsFromSutrIntentModels(options.sutrIntentModel);
             fs.writeFileSync(path.resolve(options.profile.skillOutputDirectory, intentsFileName), intents);
         } catch(e) {
