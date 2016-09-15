@@ -34,6 +34,7 @@ var intentsFileName = "intents.json";
 
 
 colors.setTheme({
+    debug: "cyan",
     info: "white",
     error: "bgRed",
     warning: "red",
@@ -73,19 +74,40 @@ function startLambdaDeployment(options, config) {
         var uploadZipSourceDir = path.resolve(options.profile.sourceDirectory);
         info("Packaging zip of source code for upload to Lambda: " + uploadZipSourceDir);
 
+        var startTime = new Date().getTime();
+        var elapsedTime;
         // Remove any possible existing files left over from a previous upload
+        debug("Removing any existing upload directory...");
         Promise.denodeify(rmdir)(uploadStagingDir)
             .then(function(){
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
+                debug("Creating upload directory");
                 mkdirp.sync(uploadStagingDir);
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
                 // copy lambda source code to temporary upload directory
+                debug("Copying Lambda code to temp directory...");
                 return Promise.denodeify(ncp)(uploadZipSourceDir, uploadStagingDir)
             })
             .then(function(){
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
+
                 // TODO: only copy over dependencies (i.e. NOT devDependencies)
                 // copy the node_modules from the source directory to resolve dependencies for lambda code
+                debug("Copying node_modules to temp directory...");
                 return Promise.denodeify(ncp)("./node_modules", path.resolve(uploadStagingDir, "node_modules"));
             })
             .then(function() {
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
+
+                debug("Merging config.js file from output directory to temp directory...");
                 // merge any existing config.json with the config.json from the temp directory
                 // existing config values will be favored over temp config values
                 var exitingConfigFilePath = path.resolve(options.profile.sourceDirectory, options.profile.skillConfigFilePath);
@@ -100,20 +122,33 @@ function startLambdaDeployment(options, config) {
                 var tempConfig = fs.readJsonSync(path.resolve(options.profile.skillOutputDirectory, options.profile.skillConfigFilePath)) || {};
                 var mergedConfig = Object.assign(tempConfig, existingConfig);
                 fs.writeJsonSync(mergedConfigFilePath, mergedConfig);
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
 
+                debug("Copying route config from output directory to temp directory...");
                 // copy intentRoutes.json into the zip location
                 fs.copySync(
                     options.profile.tempSkillRouteConfigFilePath,
                     path.resolve(uploadStagingDir, options.profile.skillRouteConfigFilePath)
                 );
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
             })
             .then(function() {
+                debug("Zipping temp directory...");
                 return Promise.denodeify(zipDir)(uploadStagingDir, { saveTo: uploadZipFile });
             })
             .catch(function(err) {
                 setErrorAndExit(500, "Error packaging source code for upload" + err);
             })
             .then(function(){
+                elapsedTime = new Date().getTime() - startTime;
+                startTime = new Date().getTime();
+                debug("Elapsed Time: " + elapsedTime + "ms");
+                process.exit(0);
+
                 info("Successfully created package for lambda upload at: " + uploadZipFile);
                 info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
 
@@ -855,6 +890,10 @@ function getIntentsFromSutrIntentModels(sutrIntents) {
 
 function success(message) {
     console.log(colors.success(message));
+}
+
+function debug(message) {
+    console.log(colors.debug(message));
 }
 
 function info(message) {
