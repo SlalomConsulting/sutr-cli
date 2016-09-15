@@ -3,8 +3,9 @@
 /**
  * This is a NodeJS script that is intended to provide a command line interface for the deployment of Alexa Skills for use with npm.
  */
-
+var Promise = require("promise");
 var fs = require("fs-extra");
+var copyNodeModules = Promise.denodeify(require("copy-node-modules"));
 var os = require("os");
 var path = require("path");
 var ini = require("ini");
@@ -14,13 +15,10 @@ var child_process = require("child_process");
 var spawn = child_process.spawn;
 var commandLineArgs = require("command-line-args"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var getUsage = require("command-line-usage"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
-var Promise = require("promise");
 var util = require("util");
 var mkdirp = require("mkdirp");
 var zipDir = require("zip-dir");
-var ncp = require("ncp").ncp;
-ncp.limit = 1000;
-var rmdir = require("rimraf");
+
 
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
 var sutrConfigFilePath = path.resolve(sutrConfigDir + "/config");
@@ -78,7 +76,7 @@ function startLambdaDeployment(options, config) {
         var elapsedTime;
         // Remove any possible existing files left over from a previous upload
         debug("Removing any existing upload directory...");
-        Promise.denodeify(rmdir)(uploadStagingDir)
+        Promise.denodeify(fs.remove)(uploadStagingDir)
             .then(function(){
                 elapsedTime = new Date().getTime() - startTime;
                 startTime = new Date().getTime();
@@ -90,7 +88,7 @@ function startLambdaDeployment(options, config) {
                 debug("Elapsed Time: " + elapsedTime + "ms");
                 // copy lambda source code to temporary upload directory
                 debug("Copying Lambda code to temp directory...");
-                return Promise.denodeify(ncp)(uploadZipSourceDir, uploadStagingDir)
+                return Promise.denodeify(fs.copy)(uploadZipSourceDir, uploadStagingDir)
             })
             .then(function(){
                 elapsedTime = new Date().getTime() - startTime;
@@ -100,7 +98,8 @@ function startLambdaDeployment(options, config) {
                 // TODO: only copy over dependencies (i.e. NOT devDependencies)
                 // copy the node_modules from the source directory to resolve dependencies for lambda code
                 debug("Copying node_modules to temp directory...");
-                return Promise.denodeify(ncp)("./node_modules", path.resolve(uploadStagingDir, "node_modules"));
+
+                return copyNodeModules("./", path.resolve(uploadStagingDir), { devDependencies: false });
             })
             .then(function() {
                 elapsedTime = new Date().getTime() - startTime;
