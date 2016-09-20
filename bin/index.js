@@ -12,7 +12,7 @@ var ini = require("ini");
 var prompt = require("prompt");
 var colors = require("colors/safe");
 var child_process = require("child_process");
-var spawn = child_process.spawn;
+var spawn = require("cross-spawn");
 var commandLineArgs = require("command-line-args"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var getUsage = require("command-line-usage"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var util = require("util");
@@ -160,7 +160,18 @@ function startSkillDeployment(options) {
             return resolve();
         }
 
-        var casperJS = spawn("casperjs", [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")], {stdio: "pipe"});
+        // TODO: add dependency checks for Python, CasperJS, and PhantomJS
+        var casperJSExePath = path.resolve(__dirname, "../node_modules/.bin/casperjs");
+        var casperJS = spawn(
+            casperJSExePath,
+            [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")],
+            {
+                stdio: "pipe",
+                env: {
+                    PHANTOMJS_EXECUTABLE: path.resolve(__dirname, "../node_modules/.bin/phantomjs")
+                }
+            }
+        );
 
         casperJS.stdout.on("data", function(data){
             process.stdout.write(data);
@@ -813,7 +824,7 @@ function loadSutrIntentModel(options) {
     return new Promise(function(resolve) {
         var sutrIntentModelFilePath = path.resolve(options.profile.skillOutputDirectory, sutrIntentModelsFileName);
         if (!fs.fileExistsSync(sutrIntentModelFilePath)) {
-            return setErrorAndExit(400, "Unable to load sutr models at: \"" + sutrIntentModelsFileName + "\".");
+            return setErrorAndExit(400, "Unable to load sutr models at: \"" + sutrIntentModelFilePath + "\".");
         }
 
         var sutrIntentModels = JSON.parse(fs.readFileSync(sutrIntentModelFilePath));
