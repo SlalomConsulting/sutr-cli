@@ -4,6 +4,7 @@
  * This is a NodeJS script that is intended to provide a command line interface for the deployment of Alexa Skills for use with npm.
  */
 var Promise = require("promise");
+var AWS = require("aws-sdk");
 var fs = require("fs-extra");
 var copyNodeModules = Promise.denodeify(require("copy-node-modules"));
 var os = require("os");
@@ -18,7 +19,9 @@ var getUsage = require("command-line-usage"); // TODO: use commander instead (ht
 var util = require("util");
 var zipDir = require("zip-dir");
 
-
+AWS.config.apiVersions = {
+    lambda: "2015-03-31"
+};
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
 var sutrConfigFilePath = path.resolve(sutrConfigDir + "/config");
 var env;
@@ -679,74 +682,86 @@ function generatePublishProfile(prompts, config) {
 
 function getOrCreateLambdaFunction(prompts, config) {
     return new Promise(function(resolve, reject) {
-        executeCmdSync("aws configure set aws_access_key_id " + config.aws_access_key_id + " --profile sutr", false, true);
-        executeCmdSync("aws configure set aws_secret_access_key " + config.aws_secret_access_key + " --profile sutr", false, true);
-        executeCmdSync("aws configure set output json --profile sutr", false, true);
-        executeCmdSync("aws configure set region " + config.region + " --profile sutr", false, true);
+        AWS.config.update({
+            accessKeyId: config.aws_access_key_id,
+            secretAccessKey: config.aws_secret_access_key,
+            region: config.region
+        });
 
         info("Getting details for Lambda function named \"" + prompts.lambdaFunctionName + "\" ...");
-
-        // if a lambda function with the given name already exists for the account
-        var lambda = executeCmdSync("aws --profile sutr lambda get-function --function-name " + prompts.lambdaFunctionName, false, false);
-        if (lambda) {
-            lambda = JSON.parse(lambda);
-            var arn = lambda.Configuration.FunctionArn;
-            comment("Using existing Lambda function \"" + prompts.lambdaFunctionName + "\": " + arn);
-            return resolve({
-                arn: arn
-            });
-        }
-
-        comment("A Lambda function with name \"" + prompts.lambdaFunctionName + "\" does not exist");
-
-        getNewFunctionConfiguration(config)
-            .then(function(lambdaConfig) {
-                info("Creating Lambda function \"" + prompts.lambdaFunctionName + "\" ...");
-
-                var starterZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
-                var starterZipFile = path.resolve(starterZipDestinationDir, "starter_" + lambdaConfig.lambdaFunctionRuntime + ".zip");
-                var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
-                fs.mkdirsSync(starterZipDestinationDir);
-
-                zipDir(starterZipSourceDir, { saveTo: starterZipFile } , function(err) {
-                    if(err) {
-                        return reject("An error occurred while creating lambda function: " + err);
-                    }
-
-                    // create AWS lambda function
-                    lambda = executeCmdSync(
-                        "aws --profile sutr lambda create-function " +
-                        "--function-name " + prompts.lambdaFunctionName + " " +
-                        "--runtime " + lambdaConfig.lambdaFunctionRuntime + " " +
-                        "--handler index.handler " +
-                        "--role " + lambdaConfig.lambdaFunctionRole + " " +
-                        "--zip-file fileb://" + starterZipFile + " " +
-                        "--description \"" + lambdaConfig.lamdaFunctionDescription + "\"", false, true);
-
-                    lambda = JSON.parse(lambda);
-                    if (lambda.FunctionArn) {
-                        success("Lambda function \"" + prompts.lambdaFunctionName + "\" sucessfully created: " + lambda.FunctionArn);
-                    }
-
-                    // Allow Alexa Skill Kit to call lambda function
-                    info("Adding permission to allow Alexa Skills Kit to invoke lambda function...");
-                    executeCmdSync(
-                        "aws --profile sutr lambda add-permission " +
-                        "--function-name " + prompts.lambdaFunctionName + " " +
-                        "--statement-id " + new Date().getTime() + " " +
-                        "--action \"lambda:InvokeFunction\" " +
-                        "--principal \"alexa-appkit.amazon.com\"", false, true);
-
-                    success("Access succesfully granted to Alexa Skills Kit!");
-
-                    resolve({
-                        arn: lambda.FunctionArn
-                    });
-                });
+        var lambda = new AWS.Lambda();
+        lambda.getFunction({FunctionName: prompts.lambdaFunctionName})
+            .promise()
+            .then(function(data) {
+                console.log(data);
             })
             .catch(function(err) {
-                reject(err);
+                console.log("Not Found: " + (err.name === "ResourceNotFoundException" ? "True" : "False"));
+                console.log("Error: " + err + "\n" + err.stack);
             });
+
+        // if a lambda function with the given name already exists for the account
+        // Promise.denodeify(lambda.getFunction)({
+        //     FunctionName: prompts.lambdaFunctionName
+        // }).catch(function(err){
+        //     error("Error getting details: " + err);
+        // }).then(function(data) {
+        //     if (data) {
+        //         var arn = data.Configuration.FunctionArn;
+        //         comment("Using existing Lambda function \"" + prompts.lambdaFunctionName + "\": " + arn);
+        //         return resolve({
+        //             arn: arn
+        //         });
+        //     }
+        // }).then(function() {
+        //     comment("A Lambda function with name \"" + prompts.lambdaFunctionName + "\" does not exist");
+        //     return getNewFunctionConfiguration(config);
+        // }).then(function(lambdaConfig) {
+        //     info("Creating Lambda function \"" + prompts.lambdaFunctionName + "\" ...");
+        //
+        //     var starterZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
+        //     var starterZipFile = path.resolve(starterZipDestinationDir, "starter_" + lambdaConfig.lambdaFunctionRuntime + ".zip");
+        //     var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
+        //     fs.mkdirsSync(starterZipDestinationDir);
+        //
+        //     zipDir(starterZipSourceDir, { saveTo: starterZipFile } , function(err) {
+        //         if(err) {
+        //             return reject("An error occurred while creating lambda function: " + err);
+        //         }
+        //
+        //         // create AWS lambda function
+        //         lambda = executeCmdSync(
+        //             "aws --profile sutr lambda create-function " +
+        //             "--function-name " + prompts.lambdaFunctionName + " " +
+        //             "--runtime " + lambdaConfig.lambdaFunctionRuntime + " " +
+        //             "--handler index.handler " +
+        //             "--role " + lambdaConfig.lambdaFunctionRole + " " +
+        //             "--zip-file fileb://" + starterZipFile + " " +
+        //             "--description \"" + lambdaConfig.lamdaFunctionDescription + "\"", false, true);
+        //
+        //         lambda = JSON.parse(lambda);
+        //         if (lambda.FunctionArn) {
+        //             success("Lambda function \"" + prompts.lambdaFunctionName + "\" sucessfully created: " + lambda.FunctionArn);
+        //         }
+        //
+        //         // Allow Alexa Skill Kit to call lambda function
+        //         info("Adding permission to allow Alexa Skills Kit to invoke lambda function...");
+        //         executeCmdSync(
+        //             "aws --profile sutr lambda add-permission " +
+        //             "--function-name " + prompts.lambdaFunctionName + " " +
+        //             "--statement-id " + new Date().getTime() + " " +
+        //             "--action \"lambda:InvokeFunction\" " +
+        //             "--principal \"alexa-appkit.amazon.com\"", false, true);
+        //
+        //         success("Access succesfully granted to Alexa Skills Kit!");
+        //
+        //         resolve({
+        //             arn: lambda.FunctionArn
+        //         });
+        //     });
+        // }).catch(function(err) {
+        //     reject(err);
+        // });
     });
 }
 
