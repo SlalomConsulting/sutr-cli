@@ -127,7 +127,7 @@ function startLambdaDeployment(options, config) {
                 );
             })
             .then(function() {
-                return Promise.denodeify(zipDir)(uploadStagingDir, { saveTo: uploadZipFile });
+                return zipDir(uploadStagingDir, { saveTo: uploadZipFile });
             })
             .catch(function(err) {
                 setErrorAndExit(500, "Error packaging source code for upload" + err);
@@ -136,17 +136,20 @@ function startLambdaDeployment(options, config) {
                 info("Successfully created package for lambda upload at: " + uploadZipFile);
                 info("Uploading code to Lambda function \"" + options.profile.endpoint.location + "\" ...");
 
-                executeCmdSync("aws configure set aws_access_key_id " + config.aws_access_key_id + " --profile sutr", false, true);
-                executeCmdSync("aws configure set aws_secret_access_key " + config.aws_secret_access_key + " --profile sutr", false, true);
-                executeCmdSync("aws configure set output json --profile sutr", false, true);
-                executeCmdSync("aws configure set region " + config.region + " --profile sutr", false, true);
+                AWS.config.update({
+                    accessKeyId: config.aws_access_key_id,
+                    secretAccessKey: config.aws_secret_access_key,
+                    region: config.region
+                });
 
-                // create AWS lambda function
-                lambda = executeCmdSync(
-                    "aws --profile sutr lambda update-function-code " +
-                    "--function-name " + options.profile.endpoint.location + " " +
-                    "--zip-file fileb://" + uploadZipFile + " ", false, true);
-
+                // upload AWS Lambda code
+                var lambda = new AWS.Lambda();
+                return lambda.updateFunctionCode({
+                    FunctionName: options.profile.endpoint.location,
+                    ZipFile: fs.readFileSync(uploadZipFile)
+                }).promise();
+            })
+            .then(function() {
                 success("Successfully uploaded code to Lambda function \"" + options.profile.endpoint.location);
                 resolve();
             })
@@ -959,31 +962,6 @@ function setErrorAndExit(code, message) {
     }
 
     process.exit(code);
-}
-
-function executeCmdSync(cmd, showOutput, exitOnFailure) {
-    if (typeof exitOnFailure === "undefined") {
-        exitOnFailure = true;
-    }
-
-    if (typeof showOutput === "undefined") {
-        showOutput = true;
-    }
-
-    try {
-        var output = child_process.execSync(cmd, {stdio: ["ignore"]});
-        if (showOutput) {
-            process.stdout.write(output);
-        }
-
-        return output || true;
-    } catch (e) {
-        if (exitOnFailure) {
-            return setErrorAndExit(500, e.message);
-        }
-
-        return undefined;
-    }
 }
 
 /**
