@@ -17,11 +17,12 @@ var spawn = require("cross-spawn");
 var commandLineArgs = require("command-line-args"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var getUsage = require("command-line-usage"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var util = require("util");
-var zipDir = require("zip-dir");
+var zipDir = Promise.denodeify(require("zip-dir"));
 
 AWS.config.apiVersions = {
     lambda: "2015-03-31"
 };
+
 var sutrConfigDir = path.resolve(os.homedir() + "/.sutr/");
 var sutrConfigFilePath = path.resolve(sutrConfigDir + "/config");
 var env;
@@ -525,7 +526,7 @@ function getNewFunctionConfiguration(config) {
 }
 
 function createPublishProfile(config, defaultConfig) {
-    return new Promise(function(resolve){
+    return new Promise(function(resolve, reject){
         comment("A publish profile is used to configure a deployment for a skill.");
         info("Enter a profile name below to create a new profile");
         var availableProfiles = getAvailableProfiles();
@@ -688,80 +689,91 @@ function getOrCreateLambdaFunction(prompts, config) {
             region: config.region
         });
 
-        info("Getting details for Lambda function named \"" + prompts.lambdaFunctionName + "\" ...");
         var lambda = new AWS.Lambda();
-        lambda.getFunction({FunctionName: prompts.lambdaFunctionName})
-            .promise()
+
+        info("Getting details for Lambda function named \"" + prompts.lambdaFunctionName + "\" ...");
+
+        lambda.getFunction({FunctionName: prompts.lambdaFunctionName}).promise()
+            // if a lambda function with the given name already exists for the account
             .then(function(data) {
-                console.log(data);
+                var arn = data.Configuration.FunctionArn;
+                comment("Using existing Lambda function \"" + prompts.lambdaFunctionName + "\": " + arn);
+                return resolve({
+                    arn: arn
+                });
             })
             .catch(function(err) {
-                console.log("Not Found: " + (err.name === "ResourceNotFoundException" ? "True" : "False"));
-                console.log("Error: " + err + "\n" + err.stack);
+                if (err.name === "ResourceNotFoundException") {
+                    // if a lambda function does not exist with the given name, continue to create a new function
+                    return createNewLambda();
+                }
+
+                // some unknown error occurred
+                throw err;
+            })
+            .then(function(data) {
+                resolve(data);
+            })
+            .catch(function(err) {
+               reject(err);
             });
 
-        // if a lambda function with the given name already exists for the account
-        // Promise.denodeify(lambda.getFunction)({
-        //     FunctionName: prompts.lambdaFunctionName
-        // }).catch(function(err){
-        //     error("Error getting details: " + err);
-        // }).then(function(data) {
-        //     if (data) {
-        //         var arn = data.Configuration.FunctionArn;
-        //         comment("Using existing Lambda function \"" + prompts.lambdaFunctionName + "\": " + arn);
-        //         return resolve({
-        //             arn: arn
-        //         });
-        //     }
-        // }).then(function() {
-        //     comment("A Lambda function with name \"" + prompts.lambdaFunctionName + "\" does not exist");
-        //     return getNewFunctionConfiguration(config);
-        // }).then(function(lambdaConfig) {
-        //     info("Creating Lambda function \"" + prompts.lambdaFunctionName + "\" ...");
-        //
-        //     var starterZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
-        //     var starterZipFile = path.resolve(starterZipDestinationDir, "starter_" + lambdaConfig.lambdaFunctionRuntime + ".zip");
-        //     var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
-        //     fs.mkdirsSync(starterZipDestinationDir);
-        //
-        //     zipDir(starterZipSourceDir, { saveTo: starterZipFile } , function(err) {
-        //         if(err) {
-        //             return reject("An error occurred while creating lambda function: " + err);
-        //         }
-        //
-        //         // create AWS lambda function
-        //         lambda = executeCmdSync(
-        //             "aws --profile sutr lambda create-function " +
-        //             "--function-name " + prompts.lambdaFunctionName + " " +
-        //             "--runtime " + lambdaConfig.lambdaFunctionRuntime + " " +
-        //             "--handler index.handler " +
-        //             "--role " + lambdaConfig.lambdaFunctionRole + " " +
-        //             "--zip-file fileb://" + starterZipFile + " " +
-        //             "--description \"" + lambdaConfig.lamdaFunctionDescription + "\"", false, true);
-        //
-        //         lambda = JSON.parse(lambda);
-        //         if (lambda.FunctionArn) {
-        //             success("Lambda function \"" + prompts.lambdaFunctionName + "\" sucessfully created: " + lambda.FunctionArn);
-        //         }
-        //
-        //         // Allow Alexa Skill Kit to call lambda function
-        //         info("Adding permission to allow Alexa Skills Kit to invoke lambda function...");
-        //         executeCmdSync(
-        //             "aws --profile sutr lambda add-permission " +
-        //             "--function-name " + prompts.lambdaFunctionName + " " +
-        //             "--statement-id " + new Date().getTime() + " " +
-        //             "--action \"lambda:InvokeFunction\" " +
-        //             "--principal \"alexa-appkit.amazon.com\"", false, true);
-        //
-        //         success("Access succesfully granted to Alexa Skills Kit!");
-        //
-        //         resolve({
-        //             arn: lambda.FunctionArn
-        //         });
-        //     });
-        // }).catch(function(err) {
-        //     reject(err);
-        // });
+            function createNewLambda() {
+                var createdFunction;
+                var lambdaConfig;
+                return Promise.resolve(true)
+                    .then(function() {
+                        comment("A Lambda function with name \"" + prompts.lambdaFunctionName + "\" does not exist");
+                        return getNewFunctionConfiguration(config);
+                    })
+                    .then(function(lambdaConf) {
+                        lambdaConfig = lambdaConf;
+                        info("Creating Lambda function \"" + prompts.lambdaFunctionName + "\" ...");
+
+                        var starterZipDestinationDir = path.resolve(os.tmpdir(),"sutr");
+                        var starterZipFile = lambdaConfig.starterZipFile = path.resolve(starterZipDestinationDir, "starter_" + lambdaConfig.lambdaFunctionRuntime + ".zip");
+                        var starterZipSourceDir = path.resolve(__dirname, "starterSource/" + lambdaConfig.lambdaFunctionRuntime);
+                        fs.mkdirsSync(starterZipDestinationDir);
+
+                        return zipDir(starterZipSourceDir, { saveTo: starterZipFile } );
+                    })
+                    .then(function() {
+                        // create AWS lambda function
+                        return lambda.createFunction({
+                            FunctionName: prompts.lambdaFunctionName,
+                            Runtime: lambdaConfig.lambdaFunctionRuntime,
+                            Handler: "index.handler", // TODO: may be different for other platforms (i.e. Java/Python)
+                            Role: lambdaConfig.lambdaFunctionRole,
+                            Code: {
+                                ZipFile: fs.readFileSync(lambdaConfig.starterZipFile)
+                            },
+                            Description: lambdaConfig.lamdaFunctionDescription
+                        }).promise();
+                    })
+                    .then(function(result) {
+                        createdFunction = result;
+                        success("Lambda function \"" + prompts.lambdaFunctionName + "\" sucessfully created: " + createdFunction.FunctionArn);
+
+                        // Allow Alexa Skill Kit to call lambda function
+                        info("Adding permission to allow Alexa Skills Kit to invoke lambda function...");
+                        return lambda.addPermission({
+                            FunctionName: prompts.lambdaFunctionName,
+                            StatementId: new Date().getTime().toString(),
+                            Action: "lambda:InvokeFunction",
+                            Principal: "alexa-appkit.amazon.com"
+                        }).promise();
+                    })
+                    .then(function(){
+                        success("Access succesfully granted to Alexa Skills Kit!");
+
+                        return Promise.resolve({
+                            arn: createdFunction.FunctionArn
+                        });
+                    })
+                    .catch(function(err) {
+                        throw new Error("An error occurred while creating lambda function: " + err + "\n" + err.stack);
+                    });
+            }
     });
 }
 
