@@ -1,6 +1,6 @@
 {
   "name": "sutr",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A command line interface for streamlining Alexa Skills deployment",
   "repository": "https://github.com/jtcharette/sutr-cli.git",
   "main": "bin/index.js",
