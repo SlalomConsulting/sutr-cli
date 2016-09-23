@@ -1,0 +1,31 @@
+# This is a comment
+# The type keyword is used to declare a custom slot type.
+# Custom slot types can use multiple words for each value.
+# Each value is seperated by a newline.
+type MyCustomType [
+	Jump
+	Run
+	Walk
+    #comments can go here
+	Stand up
+]
+
+# The literal keyword is used to declare an AMAZON.literal.
+# AMAZON.literal is considered to be deprecated and custom slot types should be favored
+# For more information about AMAZON.literal and their usage, see
+# https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/alexa-skills-kit-interaction-model-reference#literal-slot-type-reference
+literal MyLiteral [
+    Talk about it
+	Pretend it never happened
+	Forget about it
+]
+
+# Intent definitions use the following syntax:
+# def <Intent Name>(<Slot Type Or Slot Literal Or Built-in Type Name> <Slot Alias> ...) {
+# <Utterance> ...
+#} => <Function Handler Name>
+def MyAction(MyCustomType Action, MyLiteral Phrase, date Date){
+	Remember to do {Action} or {Phrase} on {Date}
+	#comments can go here
+	Remind me to {Action} and {Phrase} on {Date}
+} => MyFunction

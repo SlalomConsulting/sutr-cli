@@ -18,6 +18,7 @@ var commandLineArgs = require("command-line-args"); // TODO: use commander inste
 var getUsage = require("command-line-usage"); // TODO: use commander instead (https://www.npmjs.com/package/commander)
 var util = require("util");
 var zipDir = Promise.denodeify(require("zip-dir"));
+var which = Promise.denodeify(require("which"));
 
 AWS.config.apiVersions = {
     lambda: "2015-03-31"
@@ -167,32 +168,37 @@ function startSkillDeployment(options) {
             return resolve();
         }
 
-        // TODO: add dependency checks for Python, CasperJS, and PhantomJS
-        var casperJSExePath = path.resolve(__dirname, "../node_modules/.bin/casperjs");
-        var casperJS = spawn(
-            casperJSExePath,
-            [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")],
-            {
-                stdio: "pipe",
-                env: {
-                    PHANTOMJS_EXECUTABLE: path.resolve(__dirname, "../node_modules/.bin/phantomjs")
-                }
-            }
-        );
+        which("python")
+            .then(function(){
+                var casperJSExePath = path.resolve(__dirname, "../node_modules/.bin/casperjs");
+                var casperJS = spawn(
+                    casperJSExePath,
+                    [path.resolve(__dirname, "alexa-skill-deployment-adapter.js")],
+                    {
+                        stdio: ["pipe", "pipe", "inherit"],
+                        env: {
+                            PHANTOMJS_EXECUTABLE: path.resolve(__dirname, "../node_modules/.bin/phantomjs")
+                        }
+                    }
+                );
 
-        casperJS.stdout.on("data", function(data){
-            process.stdout.write(data);
-        });
+                casperJS.stdout.on("data", function(data){
+                    process.stdout.write(data);
+                });
 
-        casperJS.on("close", function (code) {
-            if (code !== 0) {
-                return reject("Alexa Skill deployment Failed");
-            }
+                casperJS.on("close", function (code) {
+                    if (code !== 0) {
+                        return reject("Alexa Skill deployment Failed");
+                    }
 
-            return resolve();
-        });
+                    return resolve();
+                });
 
-        casperJS.stdin.end(JSON.stringify(options));
+                casperJS.stdin.end(JSON.stringify(options));
+            })
+            .catch(function(err) {
+                reject("Please install Python 2.7+ and add to PATH: " + err);
+            });
     });
 }
 
@@ -634,9 +640,13 @@ function createPublishProfile(config, defaultConfig) {
 }
 
 function getAvailableProfiles() {
-    return fs.readdirSync(profileOutputDir).map(function(profilePaths) {
-        return path.parse(profilePaths).name;
-    });
+    try {
+        return fs.readdirSync(profileOutputDir).map(function(profilePaths) {
+            return path.parse(profilePaths).name;
+        });
+    } catch (e) {
+        return [];
+    }
 }
 
 function generatePublishProfile(prompts, config) {

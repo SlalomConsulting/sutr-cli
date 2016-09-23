@@ -1,0 +1,6 @@
+MyAction Remember to do {Action} or {Talk about it|Phrase} on {Date}
+MyAction Remember to do {Action} or {Pretend it never happened|Phrase} on {Date}
+MyAction Remember to do {Action} or {Forget about it|Phrase} on {Date}
+MyAction Remind me to {Action} and {Talk about it|Phrase} on {Date}
+MyAction Remind me to {Action} and {Pretend it never happened|Phrase} on {Date}
+MyAction Remind me to {Action} and {Forget about it|Phrase} on {Date}

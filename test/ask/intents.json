@@ -1,0 +1,21 @@
+{
+  "intents": [
+    {
+      "intent": "MyAction",
+      "slots": [
+        {
+          "name": "Action",
+          "type": "MyCustomType"
+        },
+        {
+          "name": "Phrase",
+          "type": "AMAZON.LITERAL"
+        },
+        {
+          "name": "Date",
+          "type": "AMAZON.DATE"
+        }
+      ]
+    }
+  ]
+}

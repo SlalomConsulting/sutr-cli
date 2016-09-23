@@ -1,0 +1,29 @@
+{
+  "sutrIntentModels": [
+    {
+      "intentName": "MyAction",
+      "slots": [
+        {
+          "slotName": "Action",
+          "slotType": "MyCustomType",
+          "defaultValue": "",
+          "first": true
+        },
+        {
+          "slotName": "Phrase",
+          "slotType": "AMAZON.LITERAL",
+          "defaultValue": "",
+          "first": false
+        },
+        {
+          "slotName": "Date",
+          "slotType": "AMAZON.DATE",
+          "defaultValue": "",
+          "first": false
+        }
+      ],
+      "functionName": "MyFunction",
+      "first": true
+    }
+  ]
+}
