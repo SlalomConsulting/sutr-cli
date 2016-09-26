@@ -39,6 +39,7 @@ jspm_packages
 # WebStorm
 .idea
 
-# Sutr Development
-deployment
+# Sutr Development & Testing
+test/deployment
 test/ask/casper
+test/ask/config.json

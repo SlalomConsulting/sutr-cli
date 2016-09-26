@@ -79,6 +79,10 @@ casper.on('remote.message', function(message) {
     this.echo(message);
 });
 
+casper.on("page.error", function(msg, trace) {
+    this.echo("Page Error: " + msg, "ERROR");
+});
+
 casper.thenOpen("https://developer.amazon.com", function visitLoginPage() {
     this.echo("Initializing Alexa Skills deployment...");
     this.click("header a.dp-navbar-login");
@@ -161,9 +165,10 @@ casper.then(function deleteExistingSkill() {
 casper.then(function createNewSkill() {
     this.click(".CreateApplicationButton");
 
-    this.waitUntilVisible(".EditorPanelRoot", function onNewSkillEditorLoaded() {
+    var nameFieldSelector = 'edw-user-input[edw-name="AppEditingConfig.APP_INFO_TAB.SKILL_TYPES.TEXT"] input[type="radio"][value="' + publishProfile.skillType + '"]';
+    this.waitUntilVisible(nameFieldSelector, function onNewSkillEditorLoaded() {
         // set skill type
-        this.click('edw-user-input[edw-name="AppEditingConfig.APP_INFO_TAB.SKILL_TYPES.TEXT"] input[type="radio"][value="' + publishProfile.skillType + '"]');
+        this.click(nameFieldSelector);
 
         // set the skill name (this is the name of Alexa app as it would show up in the Alexa App Store)
         this.sendKeys('edw-user-input[edw-name="AppEditingConfig.APP_INFO_TAB.NAME.TEXT"] input[type="text"]', publishProfile.skillName);
@@ -218,9 +223,11 @@ casper.then(function uploadIntents() {
     this.echo("Uploading intents from \"" + intentsJsonPath + "\" ...");
 
     this.evaluate(function(json) {
+        var intentTextArea = $('textarea[name="intentModel"]');
         // This is how we simulate copy/pasting code into the CodeMirror text area.
-        var editor = $('textarea[name="intentModel"]').next(".CodeMirror")[0].CodeMirror;
+        var editor = intentTextArea.next(".CodeMirror")[0].CodeMirror;
         editor.getDoc().setValue(json);
+        angular.element(editor).triggerHandler('input');
     }, intentsJson);
 });
 
@@ -235,6 +242,22 @@ casper.eachThen(getSlotDefinitions(), function(item) {
         // wait for the Custom Slot Editor to show
         this.waitUntilVisible(".catalog-editor-container", function() {
             this.evaluate(function(slotType) {
+                // The following line is a HACK!
+                // PhantomJS is encountering a javascript error when adding slot types after recent changes to Amazon Developer Portal
+                // And it happens in edw_app.min.js ~line 174:
+                // if (!m.isRawTextSlotEnabled) {
+                //     var i = d.modelDef[c].models
+                //         , i = i.replace(/\s/g, "");
+                //     if (i.includes(b.INTERACTION_MODEL_TAB.RAW_TEXT_SLOT)) {
+                //         g("There was a problem with your request: Unknown slot type 'AMAZON.1315766020'");
+                //         return
+                //     }
+                // }
+                // The error is similar to the following:
+                // "undefined is not a constructor (evaluating 'i.includes(b.INTERACTION_MODEL_TAB.RAW_TEXT_SLOT)')"
+                // By making "isRawTextSlotEnabled" true, we avoid this error and slots get added just fine!
+                window.EDW_CONFIG.isRawTextSlotEnabled = true;
+
                 // set the slot type name
                 var slotNameTextBox = $("#interaction-model-tab-catalog-name-textbox");
                 slotNameTextBox.val(slotType.name);
@@ -250,6 +273,7 @@ casper.eachThen(getSlotDefinitions(), function(item) {
                 var slotValueEditorElement = $('textarea[name="catalog-values"]').next(".CodeMirror");
                 var editor = slotValueEditorElement[0].CodeMirror;
                 editor.getDoc().setValue(slotType.values);
+                angular.element(editor).triggerHandler('input');
             }, slotType);
 
             this.waitFor(function waitForSaveButtonToEnable() {
@@ -333,9 +357,9 @@ casper.then(function goToEditConfigurationSettings() {
     this.click("#edw-next-skill-tab-button");
 
     // wait for endpoint configuration to load
-    this.waitForSelector("#edw-info-endpoint-input", function() {
-        this.waitForSelector("#createArnEndpoint", function() {
-            this.waitForSelector("#createHttpsEndpoint");
+    this.waitForSelector("section.update-application-endpoint", function() {
+        this.waitForSelector("#service-endpoint-lambda", function() {
+            this.waitForSelector("#service-endpoint-https");
         })
     });
 });
@@ -351,15 +375,18 @@ casper.then(function configureEndpoint() {
         // is this a lambda endpoint?
         if (publishProfile.endpoint.type.toLowerCase() === "lambda") {
             // set endpoint type
-            this.click("#createArnEndpoint");
+            this.click("#service-endpoint-lambda");
             endpointType = "Lambda";
         } else {
-            this.click("#createHttpsEndpoint");
+            this.click("#service-endpoint-https");
             endpointType = "HTTPS";
         }
 
+        // TODO: allow Skill region to be configured. For now, hardcoding to North America
+        this.click("#endpoint-region-NA");
+
         this.evaluate(function(publishProfile) {
-            var endpointTextBox = $('#edw-info-endpoint-input').find('input[type="text"]:visible');
+            var endpointTextBox = $("#regional-endpoint-option-input-NA");
             endpointTextBox.val(publishProfile.endpoint.location);
             angular.element(endpointTextBox).triggerHandler('input');
         }, publishProfile);
@@ -464,38 +491,62 @@ function saveChanges(context) {
         });
     }, function onSaveEnabled() {
         this.click("#edw-save-skill-button");
-        if (context.loadingMessage) {
-            this.echo(context.loadingMessage, "COMMENT");
-        }
 
-        this.waitFor(function waitSaveComplete() {
-            return this.evaluate(function(){
-                try {
-                    // wait until we are done loading
-                    return $("#EDW_Main_Loading_Status").is(':visible') === false;
-                } catch (e) {
-                    return false;
-                }
+        // On the configuration page there is a dialog asking to confirm global changes
+        // If that dialog exists, lets click the "Yes, apply changes" button
+        this.waitFor(function waitForConfirmationDialog() {
+            return this.evaluate(function() {
+                var dialog = $('#edw-message-box').closest(".edw-messagebox");
+                return dialog.is(":visible") && dialog.find('button:contains("Yes")').length;
             });
-        }, function saveComplete(){
-            var status = this.evaluate(function() {
-                return angular.element($("#EDW_Status")).scope().getStatus();
+        }, function() {
+            this.evaluate(function() {
+                $('#edw-message-box').find('button:contains("Yes")').click();
+            });
+            // after the dialog closes the page might be doing a rebind and so waiting briefly before continuing helps.
+            this.wait(1000, function() {
+                onConfirmSaveChanges.call(this, context);
             });
 
-            if (status.type && status.type !== "success") {
-                return this.emit("step.error", context.failureMessage + "\nReason: " + status.message);
-            }
+        }, function onNoConfirmationDialogFound() {
+            onConfirmSaveChanges.call(this, context);
+        });
 
-            if (context.successMessage) {
-                this.echo(context.successMessage, "INFO");
-            }
-
-        }, function onTimeout() {
-            this.emit("step.error", context.failureMessage + "\nReason: Timed out!");
-        }, publishProfile.buildModelTimeout);
     }, function onTimeout() {
         this.emit("step.error", context.failureMessage + "\nReason: Internal Server Error");
     });
+}
+
+function onConfirmSaveChanges(context) {
+    if (context.loadingMessage) {
+        this.echo(context.loadingMessage, "COMMENT");
+    }
+
+    this.waitFor(function waitSaveComplete() {
+        return this.evaluate(function(){
+            try {
+                // wait until we are done loading
+                return $("#EDW_Main_Loading_Status").is(':visible') === false;
+            } catch (e) {
+                return false;
+            }
+        });
+    }, function saveComplete(){
+        var status = this.evaluate(function() {
+            return angular.element($("#EDW_Status")).scope().getStatus();
+        });
+
+        if (status.type && status.type !== "success") {
+            return this.emit("step.error", context.failureMessage + "\nReason: " + status.message);
+        }
+
+        if (context.successMessage) {
+            this.echo(context.successMessage, "INFO");
+        }
+
+    }, function onTimeout() {
+        this.emit("step.error", context.failureMessage + "\nReason: Timed out!");
+    }, publishProfile.buildModelTimeout);
 }
 
 function getSlotDefinitions() {
