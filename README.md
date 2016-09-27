@@ -32,5 +32,6 @@ sutr publish --lambda [--profile profile]
 
 ## Release History
 
+* 0.5.4 FIXED: #2 - Require company name when account is affiliated with more than one company
 * 0.5.3 FIXED: #1 - Unable to publish skills
 * 0.5.0 Initial release
