@@ -455,6 +455,7 @@ function setSkillsCredentials(config) {
 
         var existingSkillsAccessKeyStr = config.skills_access_key_id ? " [" + config.skills_access_key_id + "]" : " [None]";
         var existingSkillsSecretAccessKeyStr = config.skills_secret_access_key ? " [*****]" : " [None]";
+        var existingCompanyName = config.skills_company_name ? " [" + config.skills_company_name + "]" : " [None]";
 
         prompt.message = "";
         prompt.start();
@@ -477,6 +478,12 @@ function setSkillsCredentials(config) {
 
                         return config.skills_secret_access_key;
                     }
+                },
+                companyName: {
+                    description: "Company or Developer Name" + existingCompanyName,
+                    before: function(value) {
+                        return value || config.skills_company_name || "";
+                    }
                 }
             }
         }, function (err, result) {
@@ -487,6 +494,10 @@ function setSkillsCredentials(config) {
 
             config.skills_access_key_id = result.username;
             config.skills_secret_access_key = result.password;
+
+            if (result.companyName) {
+                config.skills_company_name = result.companyName;
+            }
 
             resolve();
         });
@@ -654,6 +665,7 @@ function generatePublishProfile(prompts, config) {
         var profile = {
             environment: env,
             toolName: "Alexa Skills Kit",
+            companyName: config.skills_company_name,
             skillName: prompts.skillName,
             skillInvocationName: prompts.skillInvocationName,
             skillType: "Custom",

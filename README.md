@@ -25,8 +25,9 @@ sutr publish --lambda [--profile profile]
 
 ### TODO
 * Details on usage
-* `sutr init` command for creating boilerplate Sutr project
 * run and debug lambda locally
+* `sutr init` command for creating boilerplate Sutr project
+* `sutr build` command compiles sutr files independent of WebStorm
 * Language support (i.e. English UK, and German)
 
 ## Release History

@@ -41,5 +41,5 @@ jspm_packages
 
 # Sutr Development & Testing
 test/deployment
-test/ask/casper
-test/ask/config.json
+test/out/ask/casper/*
+test/out/ask/config.json

@@ -80,7 +80,7 @@ casper.on('remote.message', function(message) {
 });
 
 casper.on("page.error", function(msg, trace) {
-    this.echo("Page Error: " + msg, "ERROR");
+    this.emit("step.error", "Page Error: " + msg);
 });
 
 casper.thenOpen("https://developer.amazon.com", function visitLoginPage() {
@@ -92,6 +92,46 @@ casper.thenOpen("https://developer.amazon.com", function visitLoginPage() {
 casper.then(signIn.bind(casper));
 // second attempt (without cookies)
 casper.then(signIn.bind(casper, true));
+
+// Some accounts may have been invited by other accounts.
+// If this is the case, we need to select the account we wish to add the skill to by company name.
+casper.then(function selectCompany() {
+    var companies = this.evaluate(function() {
+       return $("#headerFirmDropdown").find("ul > li > a").map(function() {
+           return $(this).text();
+       }).toArray();
+    });
+
+    if (companies.length && (!publishProfile.companyName || companies.indexOf(publishProfile.companyName) === -1)) {
+        var errorMessage =
+            "You belong to more than one company!\r\n" +
+            "Please indicate which company you wish to publish your skill to " +
+            "by configuring the \"companyName\" setting of your publish profile to be one of the following: \r\n" +
+            companies.map(function(company) { return "  - " + company; }).join("\r\n");
+
+        this.emit("step.error", errorMessage);
+    } else {
+        if (companies.length) {
+            this.evaluate(function(publishProfile) {
+                $("#headerFirmDropdown").find("ul > li > a").filter(function(index, link) {
+                    return $(link).text() === publishProfile.companyName;
+                })[0].click();
+            }, publishProfile);
+
+            this.wait(500, function() {
+                this.waitFor(function waitForCompanySelection() {
+                    return this.evaluate(function(publishProfile) {
+                        try {
+                            return $("#headerFirmDropdown").children(".button").text() === publishProfile.companyName;
+                        } catch (e) {
+                            return false;
+                        }
+                    }, publishProfile);
+                });
+            });
+        }
+    }
+});
 
 casper.then(function goToAlexaDeveloperPortal() {
     fs.write(cookiesPath, JSON.stringify(phantom.cookies), 644);
@@ -212,7 +252,7 @@ casper.then(function uploadIntents() {
 
     var intentsJson;
     try {
-        var intentsJson = JSON.stringify(JSON.parse(fs.read(intentsJsonPath)), null, 2);
+        intentsJson = JSON.stringify(JSON.parse(fs.read(intentsJsonPath)), null, 2);
     } catch (e) {
         this.emit("step.error", {
             message: "Error loading \"" + intentsJsonPath + "\"\nReason:" + (e || "Unknown"),
